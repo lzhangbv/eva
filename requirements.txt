@@ -1,0 +1,13 @@
+# torch related
+torch==1.10.0
+torchvision==0.11.1
+torchaudio==0.10.0
+
+# transformer related
+dill==0.3.3
+spacy==2.3.5
+torchtext==0.6.0
+transformers==4.15.0
+
+# others
+wandb==0.12.11
