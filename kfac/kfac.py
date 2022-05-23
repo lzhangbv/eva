@@ -79,7 +79,8 @@ class KFAC(optim.Optimizer):
                 if module not in self.m_A:
                     self.m_A[module] = new
                 else:
-                    self.m_A[module].mul_(self.factor_decay).add_(new, alpha=1-self.factor_decay)
+                    #self.m_A[module].mul_(self.factor_decay).add_(new, alpha=1-self.factor_decay)
+                    self.m_A[module].mul_(1-self.factor_decay).add_(new, alpha=self.factor_decay)
             if backend.comm.size() > 1 and self.steps % self.kfac_update_freq == 0:
                 self.handles.append(backend.comm.allreduce_async_(self.m_A[module], op=backend.comm.Average))
 
@@ -91,7 +92,8 @@ class KFAC(optim.Optimizer):
                 if module not in self.m_G:
                     self.m_G[module] = new
                 else:
-                    self.m_G[module].mul_(self.factor_decay).add_(new, alpha=1-self.factor_decay)
+                    #self.m_G[module].mul_(self.factor_decay).add_(new, alpha=1-self.factor_decay)
+                    self.m_G[module].mul_(1-self.factor_decay).add_(new, alpha=self.factor_decay)
             if backend.comm.size() > 1 and self.steps % self.kfac_update_freq == 0:
                 self.handles.append(backend.comm.allreduce_async_(self.m_G[module], op=backend.comm.Average))
 
@@ -127,8 +129,8 @@ class KFAC(optim.Optimizer):
                 self.m_inv_G[module] = G.new_zeros(G.shape)
 
             # scaling the damping value
-            # pi = torch.sqrt((A.trace()/A.shape[0])/(G.trace()/G.shape[0]))
-            pi = 1
+            # pi = 1
+            pi = torch.sqrt((A.trace()/A.shape[0])/(G.trace()/G.shape[0]))
             
             # invert with diag blocks
             self._invert_diag_blocks(A, self.m_inv_A[module], damping=(self.damping ** 0.5) * pi)

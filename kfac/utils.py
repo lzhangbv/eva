@@ -63,7 +63,8 @@ def get_vector_g(g, layer):
 def get_factor_A(a, layer):
     """Return KF A"""
     if isinstance(layer, nn.Linear): 
-        a = torch.mean(a, list(range(len(a.shape)))[1:-1]) # average on sequential dim (if any)
+        if len(a.shape) > 2:
+            a = torch.mean(a, list(range(len(a.shape)))[1:-1]) # average on sequential dim (if any)
         if layer.bias is not None:
             a = torch.cat([a, a.new(a.size(0), 1).fill_(1)], 1)
         return a.t() @ (a / a.size(0))
@@ -82,7 +83,8 @@ def get_factor_A(a, layer):
 def get_factor_G(g, layer):
     """Return KF G"""
     if isinstance(layer, nn.Linear):
-        g = torch.mean(g, list(range(len(g.shape)))[1:-1]) # average on sequential dim (if any)
+        if len(g.shape) > 2:
+            g = torch.mean(g, list(range(len(g.shape)))[1:-1]) # average on sequential dim (if any)
         return g.t() @ (g / g.size(0))
 
     elif isinstance(layer, nn.Conv2d):

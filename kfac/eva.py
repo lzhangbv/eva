@@ -76,7 +76,8 @@ class KFAC(optim.Optimizer):
                 if module not in self.m_a:
                     self.m_a[module] = new
                 else:
-                    self.m_a[module].mul_(self.factor_decay).add_(new, alpha=1-self.factor_decay)
+                    #self.m_a[module].mul_(self.factor_decay).add_(new, alpha=1-self.factor_decay)
+                    self.m_a[module].mul_(1-self.factor_decay).add_(new, alpha=self.factor_decay)
             if backend.comm.size() > 1:
                 self.handles.append(backend.comm.allreduce_async_(self.m_a[module], op=backend.comm.Average))
 
@@ -88,7 +89,8 @@ class KFAC(optim.Optimizer):
                 if module not in self.m_g:
                     self.m_g[module] = new
                 else:
-                    self.m_g[module].mul_(self.factor_decay).add_(new, alpha=1-self.factor_decay)
+                    #self.m_g[module].mul_(self.factor_decay).add_(new, alpha=1-self.factor_decay)
+                    self.m_g[module].mul_(1-self.factor_decay).add_(new, alpha=self.factor_decay)
             if backend.comm.size() > 1:
                 self.handles.append(backend.comm.allreduce_async_(self.m_g[module], op=backend.comm.Average))
 

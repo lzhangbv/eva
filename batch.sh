@@ -65,7 +65,7 @@ kfac_name=eva
 #epochs=100 n_layers=6 batch_size=128 use_adam=0 base_lr=0.000001 nworkers=8 kfac_name=eva kfac=0 clusterprefix=gpu9cluster bash train_multi30k.sh 
 
 #epochs=3 model_type=bert batch_size=4 base_lr=0.000005 nworkers=8 kfac_name=eva kfac=1 fac=1 damping=0.03 clusterprefix=gpu3cluster bash train_squad.sh
-epochs=3 model_type=bert batch_size=4 use_adamw=1 base_lr=0.000005 nworkers=8 kfac_name=eva kfac=0 clusterprefix=gpu3cluster bash train_squad.sh
+#epochs=3 model_type=bert batch_size=4 use_adamw=1 base_lr=0.000005 nworkers=8 kfac_name=eva kfac=0 clusterprefix=gpu3cluster bash train_squad.sh
 
 # On one worker
 #epochs=100 dnn=resnet110 dataset=cifar10 batch_size=512 base_lr=0.4 nworkers=1 kfac_name=eva kfac=1 fac=1 damping=0.03 stat_decay=0.95 kl_clip=0.001 warmup_epochs=5 clusterprefix=gpu1cluster ./train_cifar10.sh &
