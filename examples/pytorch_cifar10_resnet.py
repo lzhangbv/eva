@@ -30,7 +30,6 @@ from cifar_vgg import VGG
 from utils import *
 
 import kfac
-#from kfac import DP_KFAC
 import kfac.backend as backend #don't use a `from` import
 
 import horovod.torch as hvd
@@ -82,10 +81,10 @@ def initialize():
                         help='iters between kfac cov ops (default: 1)')
     parser.add_argument('--stat-decay', type=float, default=0.95,
                         help='Alpha value for covariance accumulation (default: 0.95)')
-    parser.add_argument('--damping', type=float, default=0.003,
-                        help='KFAC damping factor (defaultL 0.003)')
-    parser.add_argument('--kl-clip', type=float, default=0.001,
-                        help='KL clip (default: 0.001)')
+    parser.add_argument('--damping', type=float, default=0.03,
+                        help='KFAC damping factor (defaultL 0.03)')
+    parser.add_argument('--kl-clip', type=float, default=0.01,
+                        help='KL clip (default: 0.01)')
 
     # Other Parameters
     parser.add_argument('--log-dir', default='./logs',
@@ -134,10 +133,8 @@ def initialize():
 
     # Logging Settings
     os.makedirs(args.log_dir, exist_ok=True)
-    #logfile = os.path.join(args.log_dir,
-    #    '{}_{}_ep{}_bs{}_gpu{}_kfac{}_{}_{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, backend.comm.size(), args.kfac_update_freq, args.kfac_name, args.exclude_parts))
     logfile = os.path.join(args.log_dir,
-        '{}_{}_ep{}_bs{}_gpu{}_kfac{}_{}_warmup{}_damp{}_decay{}_clip{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, backend.comm.size(), args.kfac_update_freq, args.kfac_name, args.warmup_epochs, args.damping, args.stat_decay, args.kl_clip))
+        '{}_{}_ep{}_bs{}_gpu{}_kfac{}_{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, backend.comm.size(), args.kfac_update_freq, args.kfac_name))
 
     hdlr = logging.FileHandler(logfile)
     hdlr.setFormatter(formatter)
@@ -240,12 +237,12 @@ def get_model(args):
                 fac_update_freq=args.kfac_cov_update_freq, 
                 kfac_update_freq=args.kfac_update_freq, 
                 exclude_parts=args.exclude_parts)
-        kfac_param_scheduler = kfac.KFACParamScheduler(
-                preconditioner,
-                damping_alpha=1,
-                damping_schedule=None,
-                update_freq_alpha=1,
-                update_freq_schedule=None)
+        #kfac_param_scheduler = kfac.KFACParamScheduler(
+        #        preconditioner,
+        #        damping_alpha=1,
+        #        damping_schedule=None,
+        #        update_freq_alpha=1,
+        #        update_freq_schedule=None)
     else:
         preconditioner = None
 
@@ -265,11 +262,17 @@ def get_model(args):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank])
 
     # Learning Rate Schedule
-    lrs = create_lr_schedule(backend.comm.size(), args.warmup_epochs, args.lr_decay, args.lr_decay_alpha)
+    args.polynomial_decay = False
+
+    if not args.polynomial_decay:
+        lrs = create_lr_schedule(backend.comm.size(), args.warmup_epochs, args.lr_decay, args.lr_decay_alpha)
+    else:
+        lrs = create_polynomial_lr_schedule(args.base_lr, args.warmup_epochs * args.num_steps_per_epoch, args.epochs * args.num_steps_per_epoch, lr_end=0.0, power=2.0)
+    
     lr_scheduler = [LambdaLR(optimizer, lrs)]
     if preconditioner is not None:
         lr_scheduler.append(LambdaLR(preconditioner, lrs))
-        lr_scheduler.append(kfac_param_scheduler)
+        #lr_scheduler.append(kfac_param_scheduler)
 
     return model, optimizer, preconditioner, lr_scheduler, criterion
 
@@ -338,11 +341,19 @@ def train(epoch, model, optimizer, preconditioner, lr_scheduler, criterion, trai
                 logger.info("Iteration time: mean %.3f, std: %.3f" % (np.mean(ittimes[1:]),np.std(ittimes[1:])))
             break
 
+        if args.polynomial_decay:
+            for scheduler in lr_scheduler:
+                scheduler.step()
+
     if args.verbose:
         logger.info("[%d] epoch train loss: %.4f, acc: %.3f" % (epoch, train_loss.avg.item(), 100*train_accuracy.avg.item()))
 
-    for scheduler in lr_scheduler:
-        scheduler.step()
+    if not args.polynomial_decay:
+        for scheduler in lr_scheduler:
+            scheduler.step()
+
+    if args.verbose:
+        logger.info("[%d] epoch learning rate: %f" % (epoch, optimizer.param_groups[0]['lr']))
 
 
 def test(epoch, model, criterion, test_loader, args):
@@ -369,6 +380,7 @@ if __name__ == '__main__':
     args = initialize()
 
     train_sampler, train_loader, _, test_loader = get_dataset(args)
+    args.num_steps_per_epoch = len(train_loader)
     model, optimizer, preconditioner, lr_scheduler, criterion = get_model(args)
 
     start = time.time()

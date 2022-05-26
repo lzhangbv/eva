@@ -23,7 +23,7 @@ kfac_name="${kfac_name:-eva}"
 exclude_parts="${exclude_parts:-''}"
 stat_decay="${stat_decay:-0.95}"
 damping="${damping:-0.03}"
-kl_clip="${kl_clip:-0.001}"
+kl_clip="${kl_clip:-0.01}"
 
 horovod="${horovod:-1}"
 params="--horovod $horovod --dataset $dataset --dir /datasets/cifar10 --model $dnn --batch-size $batch_size --base-lr $base_lr --epochs $epochs --warmup-epochs $warmup_epochs --momentum $momentum --kfac-update-freq $kfac --kfac-cov-update-freq $fac --lr-decay $lr_decay --stat-decay $stat_decay --damping $damping --kl-clip $kl_clip --kfac-name $kfac_name --exclude-parts ${exclude_parts}"

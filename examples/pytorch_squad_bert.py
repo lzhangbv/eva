@@ -100,8 +100,8 @@ def initialize():
                         help='iters between kfac cov ops (default: 1)')
     parser.add_argument('--stat-decay', type=float, default=0.95,
                         help='Alpha value for covariance accumulation (default: 0.95)')
-    parser.add_argument('--damping', type=float, default=0.002,
-                        help='KFAC damping factor (default 0.003)')
+    parser.add_argument('--damping', type=float, default=0.03,
+                        help='KFAC damping factor (default 0.03)')
     parser.add_argument('--kl-clip', type=float, default=0,
                         help='KL clip (default: 0)')
     parser.add_argument('--use-adamw', type=int, default=1, 

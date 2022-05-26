@@ -119,14 +119,14 @@ def initialize():
                         help='KFAC update freq schedule (default None)')
     parser.add_argument('--stat-decay', type=float, default=0.95,
                         help='Alpha value for covariance accumulation (default: 0.95)')
-    parser.add_argument('--damping', type=float, default=0.002,
-                        help='KFAC damping factor (default 0.003)')
+    parser.add_argument('--damping', type=float, default=0.03,
+                        help='KFAC damping factor (default 0.03)')
     parser.add_argument('--damping-alpha', type=float, default=0.5,
                         help='KFAC damping decay factor (default: 0.5)')
-    parser.add_argument('--damping-decay', nargs='+', type=int, default=[40, 80],
-                        help='KFAC damping decay schedule (default [40, 80])')
-    parser.add_argument('--kl-clip', type=float, default=0.001,
-                        help='KL clip (default: 0.001)')
+    parser.add_argument('--damping-decay', nargs='+', type=int, default=None,
+                        help='KFAC damping decay schedule (default None)')
+    parser.add_argument('--kl-clip', type=float, default=0.01,
+                        help='KL clip (default: 0.01)')
     parser.add_argument('--diag-blocks', type=int, default=1,
                         help='Number of blocks to approx layer factor with (default: 1)')
     parser.add_argument('--diag-warmup', type=int, default=0,

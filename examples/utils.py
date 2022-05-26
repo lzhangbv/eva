@@ -64,6 +64,20 @@ def create_lr_schedule(workers, warmup_epochs, decay_schedule, alpha=0.1):
         return lr_adj
     return lr_schedule
 
+def create_polynomial_lr_schedule(lr_init, num_warmup_steps, num_training_steps, lr_end=0.0, power=1.0):
+    def lr_schedule(current_step: int):
+        if current_step < num_warmup_steps:
+            return float(current_step) / float(max(1, num_warmup_steps))
+        elif current_step > num_training_steps:
+            return lr_end / lr_init
+        else:
+            lr_range = lr_init - lr_end
+            decay_steps = num_training_steps - num_warmup_steps
+            pct_remaining = 1 - (current_step - num_warmup_steps) / decay_steps
+            decay = lr_range * pct_remaining**power + lr_end
+            return decay / lr_init
+    return lr_schedule
+
 # F1mc: sample pseudo labels from model distributions
 def generate_pseudo_labels(outputs):
     """

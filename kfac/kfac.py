@@ -30,7 +30,7 @@ class KFAC(optim.Optimizer):
                  kfac_update_freq=1,
                  kfac_batch_size=16,
                  diag_blocks=4,
-                 kl_clip=0.001,
+                 kl_clip=0.01,
                  factor_decay=0.95,
                  exclude_vocabulary_size=None,
                  hook_enabled=True,
@@ -48,7 +48,7 @@ class KFAC(optim.Optimizer):
         self.kfac_update_freq = kfac_update_freq    # freq for communicating and inverting KFs
         self.kfac_batch_size = kfac_batch_size      # subsampled batch size for computing KFs
         self.diag_blocks = diag_blocks              # inverting KFs blocks with matrix split
-        self.kl_clip = kl_clip if kl_clip > 0 else None
+        self.kl_clip = kl_clip if (kl_clip is not None and kl_clip > 0) else None
         self.factor_decay = factor_decay
         self.exclude_vocabulary_size = exclude_vocabulary_size
         self.hook_enabled = hook_enabled
@@ -171,9 +171,9 @@ class KFAC(optim.Optimizer):
                 weight = v[:, :-1].view(module.weight.grad.data.size())
                 bias = v[:, -1:].view(module.bias.grad.data.size())
                 # kl clip: grad and precon grad
-                if self.kl_clip is not None:
-                    vg_sum += (weight * module.weight.grad.data * self.lr ** 2).sum().item()
-                    vg_sum += (bias * module.bias.grad.data * self.lr ** 2).sum().item()
+                if self.kl_clip is not None: # without-lr
+                    vg_sum += (weight * module.weight.grad.data).sum().item()
+                    vg_sum += (bias * module.bias.grad.data).sum().item()
                 # copy
                 module.weight.grad.data.copy_(weight)
                 module.bias.grad.data.copy_(bias)
@@ -181,7 +181,7 @@ class KFAC(optim.Optimizer):
             else:
                 weight = v.view(module.weight.grad.data.size())
                 if self.kl_clip is not None:
-                    vg_sum += (weight * module.weight.grad.data * self.lr ** 2).sum().item()
+                    vg_sum += (weight * module.weight.grad.data).sum().item()
                 module.weight.grad.data.copy_(weight)
             del v
 
