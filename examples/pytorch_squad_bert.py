@@ -375,19 +375,35 @@ def get_dataset(args):
 def get_model(args):
     # Load pretrained model
     args.model_type = args.model_type.lower()
+    
+    # load from cache or download from remote server
+    #config = AutoConfig.from_pretrained(
+    #    args.model_name_or_path,
+    #    cache_dir=None,
+    #)
+    #config.save_pretrained('/datasets/bert/saved_config/')
+
+    # load from saved config
     config = AutoConfig.from_pretrained(
-        args.model_name_or_path,
+        '/datasets/bert/saved_config/',
         cache_dir=None,
     )
     
     vocab_size = config.vocab_size # vocab_size=30522
     #vocab_size = 2 # for qa output layer
 
+    # load from cache or download from remote server
+    #model = AutoModelForQuestionAnswering.from_pretrained(
+    #    args.model_name_or_path,
+    #    from_tf=bool(".ckpt" in args.model_name_or_path),
+    #    config=config,
+    #    cache_dir=None,
+    #)
+    #model.save_pretrained('/datasets/bert/saved_model/')
+    
+    # load form saved model
     model = AutoModelForQuestionAnswering.from_pretrained(
-        args.model_name_or_path,
-        from_tf=bool(".ckpt" in args.model_name_or_path),
-        config=config,
-        cache_dir=None,
+        '/datasets/bert/saved_model/',
     )
     
     #if args.verbose:

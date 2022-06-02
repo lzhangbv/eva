@@ -25,8 +25,12 @@ from torchvision import datasets, transforms, models
 import torch.multiprocessing as mp
 
 import cifar_resnet as resnet
+import cifar_nf_resnet as nf_resnet
 from cifar_wide_resnet import Wide_ResNet
+from cifar_pyramidnet import ShakePyramidNet
 from cifar_vgg import VGG
+from vit import VisionTransformer, ViT_CONFIGS  
+from efficientnet import EfficientNet
 from utils import *
 
 import kfac
@@ -56,8 +60,10 @@ def initialize():
     # SGD Parameters
     parser.add_argument('--base-lr', type=float, default=0.1, metavar='LR',
                         help='base learning rate (default: 0.1)')
-    parser.add_argument('--lr-decay', nargs='+', type=int, default=[100, 150],
-                        help='epoch intervals to decay lr')
+    parser.add_argument('--lr-schedule', type=str, default='step', 
+                        choices=['step', 'polynomial', 'cosine'], help='learning rate schedules')
+    parser.add_argument('--lr-decay', nargs='+', type=float, default=[0.5, 0.75],
+                        help='epoch intervals to decay lr when using step schedule')
     parser.add_argument('--lr-decay-alpha', type=float, default=0.1,
                         help='learning rate decay alpha')
     parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
@@ -66,7 +72,22 @@ def initialize():
                         help='SGD weight decay (default: 5e-4)')
     parser.add_argument('--warmup-epochs', type=int, default=5, metavar='WE',
                         help='number of warmup epochs (default: 5)')
-
+    parser.add_argument('--label-smoothing', type=int, default=0, metavar='WE',
+                        help='label smoothing (default: 0)')
+    parser.add_argument('--mixup', type=int, default=0, metavar='WE',
+                        help='use mixup (default: 0)')
+    parser.add_argument('--cutmix', type=int, default=0, metavar='WE',
+                        help='use cutmix (default: 0)')
+    parser.add_argument('--autoaugment', type=int, default=0, metavar='WE',
+                        help='use autoaugment (default: 0)')
+    parser.add_argument('--cutout', type=int, default=0, metavar='WE',
+                        help='use cutout augment (default: 0)')
+    parser.add_argument('--use-adam', type=int, default=0, metavar='WE',
+                        help='use adam optimizer (default: 0)')
+    parser.add_argument('--use-pretrained-model', type=int, default=0, metavar='WE',
+                        help='use pretrained model e.g. ViT-B_16 (default: 0)')
+    parser.add_argument('--pretrained-dir', type=str, default='/datasets/pretrained_models/',
+                        help='pretrained model dir')
 
     # KFAC Parameters
     parser.add_argument('--kfac-type', type=str, default='Femp', 
@@ -109,13 +130,13 @@ def initialize():
     args.cuda = not args.no_cuda and torch.cuda.is_available()
     args.use_kfac = True if args.kfac_update_freq > 0 else False
     
+    if args.lr_decay[0] < 1.0: # epoch number percent
+        args.lr_decay = [args.epochs * p for p in args.lr_decay]
+    
     # Comm backend init
     # args.horovod = False
     if args.horovod:
-        if args.kfac_name in ["inverse_kaisa", "inverse_dp_hybrid"]:
-            hvd.init(process_sets="dynamic")
-        else:
-            hvd.init()
+        hvd.init()
         backend.init("Horovod")
     else:
         dist.init_process_group(backend='nccl', init_method='env://')
@@ -134,7 +155,7 @@ def initialize():
     # Logging Settings
     os.makedirs(args.log_dir, exist_ok=True)
     logfile = os.path.join(args.log_dir,
-        '{}_{}_ep{}_bs{}_gpu{}_kfac{}_{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, backend.comm.size(), args.kfac_update_freq, args.kfac_name))
+        '{}_{}_ep{}_bs{}_gpu{}_kfac{}_{}_{}_smooth{}_cutmix{}_aa{}_cutout{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, backend.comm.size(), args.kfac_update_freq, args.kfac_name, args.lr_schedule, args.label_smoothing, args.cutmix, args.autoaugment, args.cutout))
 
     hdlr = logging.FileHandler(logfile)
     hdlr.setFormatter(formatter)
@@ -154,15 +175,10 @@ def get_dataset(args):
     torch.set_num_threads(4)
     kwargs = {'num_workers': 4, 'pin_memory': True} if args.cuda else {}
 
-    transform_train = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
-    transform_test = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))])
-
+    pretrained_model = args.model.lower() if args.use_pretrained_model else None
+    transform_train, transform_test = get_transform(args.dataset, 
+            args.autoaugment, args.cutout, pretrained_model)
+    
     if args.dataset == 'cifar10':
         train_dataset = datasets.CIFAR10(root=args.dir, train=True, 
                                      download=False, transform=transform_train)
@@ -205,26 +221,65 @@ def get_model(args):
         model = resnet.resnet56(num_classes=num_classes)
     elif args.model.lower() == "resnet110":
         model = resnet.resnet110(num_classes=num_classes)
+    elif args.model.lower() == "nf-resnet20":
+        model = nf_resnet.resnet20(num_classes=num_classes)
+    elif args.model.lower() == "nf-resnet32":
+        model = nf_resnet.resnet32(num_classes=num_classes)
+    elif args.model.lower() == "nf-resnet44":
+        model = nf_resnet.resnet44(num_classes=num_classes)
+    elif args.model.lower() == "nf-resnet56":
+        model = nf_resnet.resnet56(num_classes=num_classes)
+    elif args.model.lower() == "nf-resnet110":
+        model = nf_resnet.resnet110(num_classes=num_classes)
     elif args.model.lower() == "wrn28-10":
-        model = Wide_ResNet(28, 10, 0.3, num_classes=num_classes)
+        model = Wide_ResNet(28, 10, 0.0, num_classes=num_classes)
     elif args.model.lower() == "wrn28-20":
-        model = Wide_ResNet(28, 20, 0.3, num_classes=num_classes)
+        model = Wide_ResNet(28, 20, 0.0, num_classes=num_classes)
+    elif args.model.lower() == "pyramidnet":
+        model = ShakePyramidNet(depth=110, alpha=270, num_classes=num_classes)
     elif args.model.lower() == "vgg16":
         model = VGG("VGG16", num_classes=num_classes)
     elif args.model.lower() == "vgg19":
         model = VGG("VGG19", num_classes=num_classes)
+    elif args.model.lower() == "vit-b16" and args.use_pretrained_model:
+        vit_config = ViT_CONFIGS[ "vit-b16"]
+        model = VisionTransformer(vit_config, img_size=224, zero_head=True, num_classes=num_classes)
+        model.load_from(np.load(args.pretrained_dir + "ViT-B_16.npz"))
+    elif args.model.lower() == "vit-b16" and not args.use_pretrained_model:
+        vit_config = ViT_CONFIGS[ "vit-b16"]
+        model = VisionTransformer(vit_config, img_size=32, num_classes=num_classes)
+    elif args.model.lower() == "vit-s8":
+        vit_config = ViT_CONFIGS[ "vit-s8"]
+        model = VisionTransformer(vit_config, img_size=32, num_classes=num_classes)
+    elif args.model.lower() == "vit-t8":
+        vit_config = ViT_CONFIGS[ "vit-t8"]
+        model = VisionTransformer(vit_config, img_size=32, num_classes=num_classes)
+    elif "efficientnet" in args.model.lower() and args.use_pretrained_model:
+        model = EfficientNet.from_pretrained(args.model.lower(), 
+                weights_path=args.pretrained_dir + args.model.lower() + ".pth",
+                num_classes=num_classes)
+
 
     if args.cuda:
         model.cuda()
 
     # Optimizer
-    criterion = nn.CrossEntropyLoss()
+    if args.label_smoothing:
+        criterion = LabelSmoothLoss(smoothing=0.1)
+    else:
+        criterion = nn.CrossEntropyLoss()
 
     args.base_lr = args.base_lr * backend.comm.size()
-    optimizer = optim.SGD(model.parameters(), 
-            lr=args.base_lr, 
-            momentum=args.momentum,
-            weight_decay=args.weight_decay)
+    if args.use_adam and not args.use_kfac:
+        optimizer = optim.Adam(model.parameters(), 
+                lr=args.base_lr, 
+                betas=(0.9, 0.999), 
+                weight_decay=args.weight_decay)
+    else:
+        optimizer = optim.SGD(model.parameters(), 
+                lr=args.base_lr, 
+                momentum=args.momentum,
+                weight_decay=args.weight_decay)
 
     if args.use_kfac:
         KFAC = kfac.get_kfac_module(args.kfac_name)
@@ -262,12 +317,12 @@ def get_model(args):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank])
 
     # Learning Rate Schedule
-    args.polynomial_decay = False
-
-    if not args.polynomial_decay:
-        lrs = create_lr_schedule(backend.comm.size(), args.warmup_epochs, args.lr_decay, args.lr_decay_alpha)
-    else:
+    if args.lr_schedule == 'cosine':
+        lrs = create_cosine_lr_schedule(args.warmup_epochs * args.num_steps_per_epoch, args.epochs * args.num_steps_per_epoch)
+    elif args.lr_schedule == 'polynomial':
         lrs = create_polynomial_lr_schedule(args.base_lr, args.warmup_epochs * args.num_steps_per_epoch, args.epochs * args.num_steps_per_epoch, lr_end=0.0, power=2.0)
+    elif args.lr_schedule == 'step':
+        lrs = create_multi_step_lr_schedule(backend.comm.size(), args.warmup_epochs, args.lr_decay, args.lr_decay_alpha)
     
     lr_scheduler = [LambdaLR(optimizer, lrs)]
     if preconditioner is not None:
@@ -279,6 +334,10 @@ def get_model(args):
 def train(epoch, model, optimizer, preconditioner, lr_scheduler, criterion, train_sampler, train_loader, args):
     model.train()
     train_sampler.set_epoch(epoch)
+    if args.cutmix:
+        cutmix = CutMix(size=32, beta=1.0)
+    elif args.mixup:
+        mixup = MixUp(alpha=1.0)
     
     train_loss = Metric('train_loss')
     train_accuracy = Metric('train_accuracy')
@@ -292,12 +351,28 @@ def train(epoch, model, optimizer, preconditioner, lr_scheduler, criterion, trai
 
         if args.cuda:
             data, target = data.cuda(), target.cuda()
+        
+        if args.cutmix:
+            data, target, rand_target, lambda_ = cutmix((data, target))
+        elif args.mixup:
+            if np.random.rand() <= 0.8:
+                data, target, rand_target, lambda_ = mixup((data, target))
+            else:
+                rand_target, lambda_ = torch.zeros_like(target), 1.0
+
         optimizer.zero_grad()
         iotime = time.time()
         iotimes.append(iotime-stime)
 
         output = model(data)
-        loss = criterion(output, target)
+        if type(output) == tuple:
+            output = output[0]
+
+        if args.cutmix or args.mixup:
+            loss = criterion(output, target) * lambda_ + criterion(output, rand_target) * (1.0 - lambda_)
+        else:
+            loss = criterion(output, target)
+        
         with torch.no_grad():
             train_loss.update(loss)
             train_accuracy.update(accuracy(output, target))
@@ -341,14 +416,14 @@ def train(epoch, model, optimizer, preconditioner, lr_scheduler, criterion, trai
                 logger.info("Iteration time: mean %.3f, std: %.3f" % (np.mean(ittimes[1:]),np.std(ittimes[1:])))
             break
 
-        if args.polynomial_decay:
+        if not args.lr_schedule == 'step':
             for scheduler in lr_scheduler:
                 scheduler.step()
 
     if args.verbose:
         logger.info("[%d] epoch train loss: %.4f, acc: %.3f" % (epoch, train_loss.avg.item(), 100*train_accuracy.avg.item()))
 
-    if not args.polynomial_decay:
+    if args.lr_schedule == 'step':
         for scheduler in lr_scheduler:
             scheduler.step()
 
@@ -366,6 +441,8 @@ def test(epoch, model, criterion, test_loader, args):
             if args.cuda:
                 data, target = data.cuda(), target.cuda()
             output = model(data)
+            if type(output) == tuple:
+                output = output[0]
             test_loss.update(criterion(output, target))
             test_accuracy.update(accuracy(output, target))
             

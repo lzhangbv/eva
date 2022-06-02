@@ -48,8 +48,12 @@ kfac_name=eva
 
 
 # The tuned hyper-paramters
-#epochs=100 dnn=resnet110 dataset=cifar10 batch_size=128 base_lr=0.1 nworkers=4 kfac_name=eva kfac=1 fac=1 damping=0.03 stat_decay=0.95 kl_clip=0.001 warmup_epochs=5 clusterprefix=gpu2cluster ./train_cifar10.sh &
-#epochs=100 dnn=resnet110 dataset=cifar10 batch_size=128 base_lr=0.1 nworkers=4 kfac_name=eva kfac=0 warmup_epochs=5 clusterprefix=gpu3cluster ./train_cifar10.sh &
+#epochs=100 dnn=wrn28-10 dataset=cifar10 batch_size=128 base_lr=0.1 nworkers=4 kfac_name=eva kfac=1 fac=1 damping=0.03 stat_decay=0.95 kl_clip=0.01 warmup_epochs=5 clusterprefix=gpu1cluster ./train_cifar10.sh &
+#epochs=100 dnn=wrn28-10 dataset=cifar10 batch_size=128 base_lr=0.1 nworkers=4 kfac_name=kfac kfac=10 fac=10 damping=0.03 stat_decay=0.95 kl_clip=0.01 warmup_epochs=5 clusterprefix=gpu2cluster ./train_cifar10.sh &
+
+#epochs=100 dnn=vgg19 dataset=cifar10 batch_size=128 base_lr=0.1 nworkers=4 kfac_name=eva kfac=1 fac=1 damping=0.03 stat_decay=0.95 kl_clip=0.01 warmup_epochs=5 clusterprefix=gpu4cluster ./train_cifar10.sh &
+#epochs=100 dnn=vgg19 dataset=cifar10 batch_size=128 base_lr=0.1 nworkers=4 kfac_name=kfac kfac=10 fac=10 damping=0.03 stat_decay=0.95 kl_clip=0.01 warmup_epochs=5 clusterprefix=gpu5cluster ./train_cifar10.sh &
+#epochs=100 dnn=vgg19 dataset=cifar10 batch_size=128 base_lr=0.1 nworkers=4 kfac_name=eva kfac=0 warmup_epochs=5 clusterprefix=gpu6cluster ./train_cifar10.sh &
 
 #lr_decay="${lr_decay:-35 65 80}"
 #epochs=100 dnn=vgg16 dataset=cifar100 batch_size=128 base_lr=0.1 lr_decay=$lr_decay nworkers=4 kfac_name=eva kfac=1 fac=1 damping=0.03 stat_decay=0.95 kl_clip=0.001 warmup_epochs=5 clusterprefix=gpu1cluster ./train_cifar100.sh &
