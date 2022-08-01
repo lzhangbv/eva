@@ -160,20 +160,27 @@ class KFAC(optim.Optimizer):
 	### Precondition gradients
     def _precondition_grads(self):
         """Compute preconditioned gradients via K-FAC"""
+        g_sum = 0
+        v_sum = 0
         vg_sum = 0
+
         for module in self.modules:
             # compute preconditioned grads
             grad = self._get_grad(module)
             v = self.m_inv_G[module] @ grad @ self.m_inv_A[module]
 
-            # weight and bias
+            # re-scale preconditioned grads
             if module.bias is not None:
                 weight = v[:, :-1].view(module.weight.grad.data.size())
                 bias = v[:, -1:].view(module.bias.grad.data.size())
                 # kl clip: grad and precon grad
-                if self.kl_clip is not None: # without-lr
-                    vg_sum += (weight * module.weight.grad.data).sum().item()
-                    vg_sum += (bias * module.bias.grad.data).sum().item()
+                if self.kl_clip is not None:
+                    v_sum += (weight * weight).sum().item()
+                    v_sum += (bias * bias).sum().item()
+                    g_sum += (module.weight.grad.data * module.weight.grad.data).sum().item()
+                    g_sum += (module.bias.grad.data * module.bias.grad.data).sum().item()
+                    vg_sum += (weight * module.weight.grad.data * self.lr ** 2).sum().item()
+                    vg_sum += (bias * module.bias.grad.data * self.lr ** 2).sum().item()
                 # copy
                 module.weight.grad.data.copy_(weight)
                 module.bias.grad.data.copy_(bias)
@@ -181,13 +188,19 @@ class KFAC(optim.Optimizer):
             else:
                 weight = v.view(module.weight.grad.data.size())
                 if self.kl_clip is not None:
-                    vg_sum += (weight * module.weight.grad.data).sum().item()
+                    v_sum += (weight * weight).sum().item()
+                    g_sum += (module.weight.grad.data * module.weight.grad.data).sum().item()
+                    vg_sum += (weight * module.weight.grad.data * self.lr ** 2).sum().item()
                 module.weight.grad.data.copy_(weight)
             del v
 
-        # kl clip
+        # re-scale preconditioned grads
         if self.kl_clip is not None:
-            nu = min(1.0, math.sqrt(self.kl_clip / abs(vg_sum)))
+            #nu = math.sqrt(g_sum / v_sum) #re-scale
+            if vg_sum > 0:
+                nu = min(1.0, math.sqrt(self.kl_clip/vg_sum)) # kl-clip
+            else:
+                nu = 1.0
 
             for module in self.modules:
                 module.weight.grad.data.mul_(nu)

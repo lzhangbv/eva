@@ -9,6 +9,9 @@ from kfac.utils import get_vector_a, get_vector_g
 import logging
 logger = logging.getLogger()
 
+"""
+Eva Implemetation for Experiments, e.g., different clip methods
+"""
 
 class KFAC(optim.Optimizer):
     """Accelerate Distributed K-FAC with Sublinear Memory Cost
@@ -78,8 +81,6 @@ class KFAC(optim.Optimizer):
                 else:
                     #self.m_a[module].mul_(self.factor_decay).add_(new, alpha=1-self.factor_decay)
                     self.m_a[module].mul_(1-self.factor_decay).add_(new, alpha=self.factor_decay)
-                    #xi =  math.pow(self.steps+1, -self.factor_decay)
-                    #self.m_a[module].mul_(1-xi).add_(new, alpha=xi)
             if backend.comm.size() > 1:
                 self.handles.append(backend.comm.allreduce_async_(self.m_a[module], op=backend.comm.Average))
 
@@ -93,8 +94,6 @@ class KFAC(optim.Optimizer):
                 else:
                     #self.m_g[module].mul_(self.factor_decay).add_(new, alpha=1-self.factor_decay)
                     self.m_g[module].mul_(1-self.factor_decay).add_(new, alpha=self.factor_decay)
-                    #xi =  math.pow(self.steps+1, -self.factor_decay)
-                    #self.m_g[module].mul_(1-xi).add_(new, alpha=xi)
             if backend.comm.size() > 1:
                 self.handles.append(backend.comm.allreduce_async_(self.m_g[module], op=backend.comm.Average))
 
@@ -120,9 +119,11 @@ class KFAC(optim.Optimizer):
 	### Precondition gradients
     def _precondition_grads(self):
         """Compute preconditioned gradients via Eva"""
+        vg_sum = 0
         g_sum = 0
         v_sum = 0
-        vg_sum = 0
+        # other clip methods (WIP...)
+        self.clip_type = 'kl-clip'  # choices: kl-clip, grad-clip, grad-scale, lars-clip, rms-clip
 
         for module in self.modules:
             # get ma, mg, grad
@@ -144,14 +145,19 @@ class KFAC(optim.Optimizer):
             if module.bias is not None:
                 weight = v[:, :-1].view(module.weight.grad.data.size())
                 bias = v[:, -1:].view(module.bias.grad.data.size())
-                # transform preconditioned gradient into gradient scale
+                # kl clip: grad and precon grad
                 if self.kl_clip is not None:
-                    #v_sum += (weight * weight).sum().item()
-                    #v_sum += (bias * bias).sum().item()
-                    #g_sum += (module.weight.grad.data * module.weight.grad.data).sum().item()
-                    #g_sum += (module.bias.grad.data * module.bias.grad.data).sum().item()
-                    vg_sum += (weight * module.weight.grad.data * self.lr ** 2).sum().item()
-                    vg_sum += (bias * module.bias.grad.data * self.lr ** 2).sum().item()
+                    if self.clip_type == 'kl-clip':  # without-lr
+                        vg_sum += (weight * module.weight.grad.data).sum().item()
+                        vg_sum += (bias * module.bias.grad.data).sum().item()
+                    elif self.clip_type == 'grad-clip':
+                        v_sum += (weight * weight).sum().item()
+                        v_sum += (bias * bias).sum().item()
+                    elif self.clip_type == 'grad-scale':
+                        v_sum += (weight * weight).sum().item()
+                        v_sum += (bias * bias).sum().item()
+                        g_sum += (module.weight.grad.data * module.weight.grad.data).sum().item()
+                        g_sum += (module.bias.grad.data * module.bias.grad.data).sum().item()
                 # copy
                 module.weight.grad.data.copy_(weight)
                 module.bias.grad.data.copy_(bias)
@@ -159,25 +165,52 @@ class KFAC(optim.Optimizer):
             else:
                 weight = v.view(module.weight.grad.data.size())
                 if self.kl_clip is not None:
-                    #v_sum += (weight * weight).sum().item()
-                    #g_sum += (module.weight.grad.data * module.weight.grad.data).sum().item()
-                    vg_sum += (weight * module.weight.grad.data * self.lr ** 2).sum().item()
+                    if self.clip_type == 'kl-clip':  # without-lr
+                        vg_sum += (weight * module.weight.grad.data).sum().item()
+                    elif self.clip_type == 'grad-clip':
+                        v_sum += (weight * weight).sum().item()
+                    elif self.clip_type == 'grad-scale':
+                        v_sum += (weight * weight).sum().item()
+                        g_sum += (module.weight.grad.data * module.weight.grad.data).sum().item()
                 # copy
                 module.weight.grad.data.copy_(weight)
             del v
 
-        # scale preconditioned gradient
+            # lars-clip or rms-clip
+            if self.kl_clip is not None:
+                if self.clip_type == 'lars-clip':
+                    w_norm = module.weight.norm(2).item()
+                    v_norm = module.weight.grad.norm(2).item()
+                    if v_norm > 0:
+                        nu = min(50, self.kl_clip * w_norm / v_norm)
+                        module.weight.grad.data.mul_(nu)
+                    if module.bias is not None:
+                        w_norm = module.bias.norm(2).item()
+                        v_norm = module.bias.grad.norm(2).item()
+                        if v_norm > 0:
+                            nu = min(50, self.kl_clip * w_norm / v_norm)
+                            module.bias.grad.data.mul_(nu)
+                elif self.clip_type == 'rms-clip':
+                    rms = module.weight.grad.norm(2) / (module.weight.grad.numel() ** 0.5)
+                    module.weight.grad.data.div_((rms / self.rms_clip).clamp_(min=1.0))
+                    if module.bias is not None:
+                        rms = module.bias.grad.norm(2) / (module.bias.grad.numel() ** 0.5)
+                        module.bias.grad.data.div_((rms / self.rms_clip).clamp_(min=1.0))
+
+        # kl-clip or grad-clip or grad-scale
         if self.kl_clip is not None:
-            #nu = math.sqrt(g_sum / v_sum) #re-scale
-            if vg_sum > 0:
-                nu = min(1.0, math.sqrt(self.kl_clip / vg_sum))
-            else:
-                nu = 1.0
+            if self.clip_type == 'kl-clip':
+                nu = min(1.0, math.sqrt(self.kl_clip / abs(vg_sum)))
+            elif self.clip_type == 'grad-clip':
+                nu = min(1.0, math.sqrt(self.grad_clip / abs(v_sum)))
+            elif self.clip_type == 'grad-scale':
+                nu = math.sqrt(g_sum / v_sum)
 
             for module in self.modules:
                 module.weight.grad.data.mul_(nu)
                 if module.bias is not None:
                     module.bias.grad.data.mul_(nu)
+
 
     def _get_grad(self, module):
         """Get gradient with shape [output_dim, input_dim] for module"""

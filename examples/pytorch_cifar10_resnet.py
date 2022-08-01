@@ -25,7 +25,6 @@ from torchvision import datasets, transforms, models
 import torch.multiprocessing as mp
 
 import cifar_resnet as resnet
-import cifar_nf_resnet as nf_resnet
 from cifar_wide_resnet import Wide_ResNet
 from cifar_pyramidnet import ShakePyramidNet
 from cifar_vgg import VGG
@@ -154,8 +153,11 @@ def initialize():
 
     # Logging Settings
     os.makedirs(args.log_dir, exist_ok=True)
+    #logfile = os.path.join(args.log_dir,
+    #    '{}_{}_ep{}_bs{}_gpu{}_kfac{}_{}_{}_smooth{}_cutmix{}_aa{}_cutout{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, backend.comm.size(), args.kfac_update_freq, args.kfac_name, args.lr_schedule, args.label_smoothing, args.cutmix, args.autoaugment, args.cutout))
+    
     logfile = os.path.join(args.log_dir,
-        '{}_{}_ep{}_bs{}_gpu{}_kfac{}_{}_{}_smooth{}_cutmix{}_aa{}_cutout{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, backend.comm.size(), args.kfac_update_freq, args.kfac_name, args.lr_schedule, args.label_smoothing, args.cutmix, args.autoaugment, args.cutout))
+        '{}_{}_ep{}_bs{}_gpu{}_kfac{}_{}_{}_momentum{}_damping{}_stat{}_clip{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, backend.comm.size(), args.kfac_update_freq, args.kfac_name, args.lr_schedule, args.momentum, args.damping, args.stat_decay, args.kl_clip))
 
     hdlr = logging.FileHandler(logfile)
     hdlr.setFormatter(formatter)
@@ -221,16 +223,6 @@ def get_model(args):
         model = resnet.resnet56(num_classes=num_classes)
     elif args.model.lower() == "resnet110":
         model = resnet.resnet110(num_classes=num_classes)
-    elif args.model.lower() == "nf-resnet20":
-        model = nf_resnet.resnet20(num_classes=num_classes)
-    elif args.model.lower() == "nf-resnet32":
-        model = nf_resnet.resnet32(num_classes=num_classes)
-    elif args.model.lower() == "nf-resnet44":
-        model = nf_resnet.resnet44(num_classes=num_classes)
-    elif args.model.lower() == "nf-resnet56":
-        model = nf_resnet.resnet56(num_classes=num_classes)
-    elif args.model.lower() == "nf-resnet110":
-        model = nf_resnet.resnet110(num_classes=num_classes)
     elif args.model.lower() == "wrn28-10":
         model = Wide_ResNet(28, 10, 0.0, num_classes=num_classes)
     elif args.model.lower() == "wrn28-20":
