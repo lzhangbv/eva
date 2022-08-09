@@ -14,7 +14,7 @@ epochs="${epochs:-100}"
 warmup_epochs="${warmup_epochs:-5}"
 
 momentum="${momentum:-0.9}"
-use_adam="${use_adam:-0}"
+opt_name="${opt_name:-sgd}"
 weight_decay="${weight_decay:-0.0005}"
 
 # tricks
@@ -34,7 +34,7 @@ stat_decay="${stat_decay:-0.95}"
 kl_clip="${kl_clip:-0.001}"
 
 horovod="${horovod:-1}"
-params="--horovod $horovod --dataset $dataset --dir /datasets/cifar10 --model $dnn --batch-size $batch_size --base-lr $base_lr --lr-schedule $lr_schedule --lr-decay $lr_decay --epochs $epochs --warmup-epochs $warmup_epochs --momentum $momentum --use-adam $use_adam --weight-decay $weight_decay --label-smoothing $label_smoothing --mixup $mixup --cutmix $cutmix --autoaugment $autoaugment --cutout $cutout --use-pretrained-model $use_pretrained_model --kfac-update-freq $kfac --kfac-cov-update-freq $fac --kfac-name $kfac_name --stat-decay $stat_decay --damping $damping --kl-clip $kl_clip"
+params="--horovod $horovod --dataset $dataset --dir /datasets/cifar10 --model $dnn --batch-size $batch_size --base-lr $base_lr --lr-schedule $lr_schedule --lr-decay $lr_decay --epochs $epochs --warmup-epochs $warmup_epochs --momentum $momentum --opt-name $opt_name --weight-decay $weight_decay --label-smoothing $label_smoothing --mixup $mixup --cutmix $cutmix --autoaugment $autoaugment --cutout $cutout --use-pretrained-model $use_pretrained_model --kfac-update-freq $kfac --kfac-cov-update-freq $fac --kfac-name $kfac_name --stat-decay $stat_decay --damping $damping --kl-clip $kl_clip"
 
 nworkers="${nworkers:-4}"
 rdma="${rdma:-1}"

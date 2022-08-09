@@ -30,7 +30,7 @@ class KFAC(optim.Optimizer):
                  kfac_update_freq=1,
                  kfac_batch_size=16,
                  diag_blocks=4,
-                 kl_clip=0.01,
+                 kl_clip=0.001,
                  factor_decay=0.95,
                  exclude_vocabulary_size=None,
                  hook_enabled=True,
@@ -48,7 +48,7 @@ class KFAC(optim.Optimizer):
         self.kfac_update_freq = kfac_update_freq    # freq for communicating and inverting KFs
         self.kfac_batch_size = kfac_batch_size      # subsampled batch size for computing KFs
         self.diag_blocks = diag_blocks              # inverting KFs blocks with matrix split
-        self.kl_clip = kl_clip if (kl_clip is not None and kl_clip > 0) else None
+        self.kl_clip = kl_clip if (kl_clip is not None and kl_clip >= 0) else None
         self.factor_decay = factor_decay
         self.exclude_vocabulary_size = exclude_vocabulary_size
         self.hook_enabled = hook_enabled
@@ -131,6 +131,11 @@ class KFAC(optim.Optimizer):
             # scaling the damping value
             # pi = 1
             pi = torch.sqrt((A.trace()/A.shape[0])/(G.trace()/G.shape[0]))
+            pi = min(pi, 10e9) # in case that G is almost zero
+            
+            #if backend.comm.rank() == 0:
+            #    logger.info("G: %s" % (G))
+            #    logger.info("A trace: %s, G trace: %s, pi: %s" % (A.trace(), G.trace(), pi))
             
             # invert with diag blocks
             self._invert_diag_blocks(A, self.m_inv_A[module], damping=(self.damping ** 0.5) * pi)
@@ -175,12 +180,14 @@ class KFAC(optim.Optimizer):
                 bias = v[:, -1:].view(module.bias.grad.data.size())
                 # kl clip: grad and precon grad
                 if self.kl_clip is not None:
-                    v_sum += (weight * weight).sum().item()
-                    v_sum += (bias * bias).sum().item()
-                    g_sum += (module.weight.grad.data * module.weight.grad.data).sum().item()
-                    g_sum += (module.bias.grad.data * module.bias.grad.data).sum().item()
-                    vg_sum += (weight * module.weight.grad.data * self.lr ** 2).sum().item()
-                    vg_sum += (bias * module.bias.grad.data * self.lr ** 2).sum().item()
+                    if self.kl_clip > 0:
+                        vg_sum += (weight * module.weight.grad.data * self.lr ** 2).sum().item()
+                        vg_sum += (bias * module.bias.grad.data * self.lr ** 2).sum().item()
+                    else:
+                        v_sum += (weight * weight).sum().item()
+                        v_sum += (bias * bias).sum().item()
+                        g_sum += (module.weight.grad.data * module.weight.grad.data).sum().item()
+                        g_sum += (module.bias.grad.data * module.bias.grad.data).sum().item()
                 # copy
                 module.weight.grad.data.copy_(weight)
                 module.bias.grad.data.copy_(bias)
@@ -188,19 +195,20 @@ class KFAC(optim.Optimizer):
             else:
                 weight = v.view(module.weight.grad.data.size())
                 if self.kl_clip is not None:
-                    v_sum += (weight * weight).sum().item()
-                    g_sum += (module.weight.grad.data * module.weight.grad.data).sum().item()
-                    vg_sum += (weight * module.weight.grad.data * self.lr ** 2).sum().item()
+                    if self.kl_clip > 0:
+                        vg_sum += (weight * module.weight.grad.data * self.lr ** 2).sum().item()
+                    else:
+                        v_sum += (weight * weight).sum().item()
+                        g_sum += (module.weight.grad.data * module.weight.grad.data).sum().item()
                 module.weight.grad.data.copy_(weight)
             del v
 
         # re-scale preconditioned grads
         if self.kl_clip is not None:
-            #nu = math.sqrt(g_sum / v_sum) #re-scale
-            if vg_sum > 0:
-                nu = min(1.0, math.sqrt(self.kl_clip/vg_sum)) # kl-clip
-            else:
-                nu = 1.0
+            if self.kl_clip > 0: # kl-clip
+                nu = min(1.0, math.sqrt(self.kl_clip/vg_sum)) if vg_sum > 0 else 1.0
+            else: # re-scale
+                nu = math.sqrt(g_sum / v_sum)
 
             for module in self.modules:
                 module.weight.grad.data.mul_(nu)

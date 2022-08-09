@@ -16,7 +16,7 @@ class KFAC(optim.Optimizer):
       model (nn): Torch model
       lr (float): learning rate (default: 0.1)
       damping (float): Tikhonov damping parameter (default: 0.03)
-      kl_clip (float): clipping parameter for gradient scaling
+      kl_clip (float): clipping parameter for gradient scaling (kl_clip > 0: kl-clip, kl_clip = 0: re-scale, kl-clip < 0: None)
       factor_decay (float): running average coefficient for KVs
       exclude_vocabulary_size: exclude the pre-softmax linear layer in the Transformer
       hook_enabled (bool): enable the hook events to save the immediate states (a and g)
@@ -29,7 +29,7 @@ class KFAC(optim.Optimizer):
                  fac_update_freq=1,
                  kfac_update_freq=1,
                  kfac_batch_size=16,
-                 kl_clip=0.01,
+                 kl_clip=0.001,
                  factor_decay=0.95,
                  exclude_vocabulary_size=None,
                  hook_enabled=True,
@@ -45,7 +45,7 @@ class KFAC(optim.Optimizer):
 
         self.fac_update_freq = fac_update_freq
         self.kfac_batch_size = kfac_batch_size
-        self.kl_clip = kl_clip if (kl_clip is not None and kl_clip > 0) else None
+        self.kl_clip = kl_clip if (kl_clip is not None and kl_clip >= 0) else None
         self.factor_decay = factor_decay
         self.exclude_vocabulary_size = exclude_vocabulary_size
         self.hook_enabled = hook_enabled
@@ -130,6 +130,9 @@ class KFAC(optim.Optimizer):
             mg = self.m_g[module].view(-1, 1)
             grad = self._get_grad(module)
             
+            #if backend.comm.rank() == 0:
+            #    logger.info("mg: %s" % (mg))
+            
             # compute intermediate states
             a = (ma.T @ ma).item()
             g = (mg.T @ mg).item()
@@ -146,12 +149,14 @@ class KFAC(optim.Optimizer):
                 bias = v[:, -1:].view(module.bias.grad.data.size())
                 # transform preconditioned gradient into gradient scale
                 if self.kl_clip is not None:
-                    #v_sum += (weight * weight).sum().item()
-                    #v_sum += (bias * bias).sum().item()
-                    #g_sum += (module.weight.grad.data * module.weight.grad.data).sum().item()
-                    #g_sum += (module.bias.grad.data * module.bias.grad.data).sum().item()
-                    vg_sum += (weight * module.weight.grad.data * self.lr ** 2).sum().item()
-                    vg_sum += (bias * module.bias.grad.data * self.lr ** 2).sum().item()
+                    if self.kl_clip > 0:
+                        vg_sum += (weight * module.weight.grad.data * self.lr ** 2).sum().item()
+                        vg_sum += (bias * module.bias.grad.data * self.lr ** 2).sum().item()
+                    else:
+                        v_sum += (weight * weight).sum().item()
+                        v_sum += (bias * bias).sum().item()
+                        g_sum += (module.weight.grad.data * module.weight.grad.data).sum().item()
+                        g_sum += (module.bias.grad.data * module.bias.grad.data).sum().item()
                 # copy
                 module.weight.grad.data.copy_(weight)
                 module.bias.grad.data.copy_(bias)
@@ -159,20 +164,21 @@ class KFAC(optim.Optimizer):
             else:
                 weight = v.view(module.weight.grad.data.size())
                 if self.kl_clip is not None:
-                    #v_sum += (weight * weight).sum().item()
-                    #g_sum += (module.weight.grad.data * module.weight.grad.data).sum().item()
-                    vg_sum += (weight * module.weight.grad.data * self.lr ** 2).sum().item()
+                    if self.kl_clip > 0:
+                        vg_sum += (weight * module.weight.grad.data * self.lr ** 2).sum().item()
+                    else:
+                        v_sum += (weight * weight).sum().item()
+                        g_sum += (module.weight.grad.data * module.weight.grad.data).sum().item()
                 # copy
                 module.weight.grad.data.copy_(weight)
             del v
 
         # scale preconditioned gradient
         if self.kl_clip is not None:
-            #nu = math.sqrt(g_sum / v_sum) #re-scale
-            if vg_sum > 0:
-                nu = min(1.0, math.sqrt(self.kl_clip / vg_sum))
-            else:
-                nu = 1.0
+            if self.kl_clip > 0: # kl-clip
+                nu = min(1.0, math.sqrt(self.kl_clip / vg_sum)) if vg_sum > 0 else 1.0
+            else: # re-scale
+                nu = math.sqrt(g_sum / v_sum)
 
             for module in self.modules:
                 module.weight.grad.data.mul_(nu)

@@ -16,6 +16,9 @@ strhdlr = logging.StreamHandler()
 strhdlr.setFormatter(formatter)
 logger.addHandler(strhdlr) 
 
+import wandb
+wandb = False
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -34,6 +37,7 @@ from utils import *
 
 import kfac
 import kfac.backend as backend #don't use a `from` import
+from kfac.shampoo import Shampoo
 
 import horovod.torch as hvd
 import torch.distributed as dist
@@ -81,8 +85,8 @@ def initialize():
                         help='use autoaugment (default: 0)')
     parser.add_argument('--cutout', type=int, default=0, metavar='WE',
                         help='use cutout augment (default: 0)')
-    parser.add_argument('--use-adam', type=int, default=0, metavar='WE',
-                        help='use adam optimizer (default: 0)')
+    parser.add_argument('--opt-name', type=str, default='sgd', metavar='WE',
+                        help='choose base optimizer [sgd, adam, shampoo]')
     parser.add_argument('--use-pretrained-model', type=int, default=0, metavar='WE',
                         help='use pretrained model e.g. ViT-B_16 (default: 0)')
     parser.add_argument('--pretrained-dir', type=str, default='/datasets/pretrained_models/',
@@ -127,7 +131,7 @@ def initialize():
 
     # Training Settings
     args.cuda = not args.no_cuda and torch.cuda.is_available()
-    args.use_kfac = True if args.kfac_update_freq > 0 else False
+    args.use_kfac = True if (args.kfac_update_freq > 0 and args.opt_name == 'sgd') else False
     
     if args.lr_decay[0] < 1.0: # epoch number percent
         args.lr_decay = [args.epochs * p for p in args.lr_decay]
@@ -152,12 +156,10 @@ def initialize():
     torch.backends.cudnn.benchmark = True
 
     # Logging Settings
+    algo = args.kfac_name if args.use_kfac else args.opt_name
     os.makedirs(args.log_dir, exist_ok=True)
-    #logfile = os.path.join(args.log_dir,
-    #    '{}_{}_ep{}_bs{}_gpu{}_kfac{}_{}_{}_smooth{}_cutmix{}_aa{}_cutout{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, backend.comm.size(), args.kfac_update_freq, args.kfac_name, args.lr_schedule, args.label_smoothing, args.cutmix, args.autoaugment, args.cutout))
-    
     logfile = os.path.join(args.log_dir,
-        '{}_{}_ep{}_bs{}_gpu{}_kfac{}_{}_{}_momentum{}_damping{}_stat{}_clip{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, backend.comm.size(), args.kfac_update_freq, args.kfac_name, args.lr_schedule, args.momentum, args.damping, args.stat_decay, args.kl_clip))
+        '{}_{}_ep{}_bs{}_gpu{}_kfac{}_{}_{}_momentum{}_damping{}_stat{}_clip{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, backend.comm.size(), args.kfac_update_freq, algo, args.lr_schedule, args.momentum, args.damping, args.stat_decay, args.kl_clip))
 
     hdlr = logging.FileHandler(logfile)
     hdlr.setFormatter(formatter)
@@ -168,6 +170,9 @@ def initialize():
     if args.verbose:
         logger.info("torch version: %s", torch.__version__)
         logger.info(args)
+
+    if args.verbose and wandb:
+        wandb.init(project="kfac", entity="hkust-distributedml", name=logfile, config=args)
     
     return args
 
@@ -262,12 +267,18 @@ def get_model(args):
         criterion = nn.CrossEntropyLoss()
 
     args.base_lr = args.base_lr * backend.comm.size()
-    if args.use_adam and not args.use_kfac:
+    if args.opt_name == "adam":
         optimizer = optim.Adam(model.parameters(), 
                 lr=args.base_lr, 
                 betas=(0.9, 0.999), 
                 weight_decay=args.weight_decay)
-    else:
+    elif args.opt_name == "shampoo":
+        optimizer = Shampoo(params=model.parameters(), 
+                    lr=args.base_lr, 
+                    momentum=args.momentum, 
+                    weight_decay=args.weight_decay,
+                    update_freq=args.kfac_update_freq)
+    elif args.opt_name == 'sgd':
         optimizer = optim.SGD(model.parameters(), 
                 lr=args.base_lr, 
                 momentum=args.momentum,
@@ -276,7 +287,6 @@ def get_model(args):
     if args.use_kfac:
         KFAC = kfac.get_kfac_module(args.kfac_name)
         preconditioner = KFAC(model, 
-        #preconditioner = DP_KFAC(model, inv_type='eigen',
                 lr=args.base_lr, 
                 factor_decay=args.stat_decay, 
                 damping=args.damping, 
@@ -318,7 +328,7 @@ def get_model(args):
     
     lr_scheduler = [LambdaLR(optimizer, lrs)]
     if preconditioner is not None:
-        lr_scheduler.append(LambdaLR(preconditioner, lrs))
+        lr_scheduler.append(LambdaLR(preconditioner, lrs)) # lr schedule for preconditioner as well
         #lr_scheduler.append(kfac_param_scheduler)
 
     return model, optimizer, preconditioner, lr_scheduler, criterion
@@ -396,6 +406,9 @@ def train(epoch, model, optimizer, preconditioner, lr_scheduler, criterion, trai
         avg_time += (time.time()-stime)
             
         if (batch_idx + 1) % display == 0:
+            if args.verbose:
+                logger.info("[%d][%d] train loss: %.4f, acc: %.3f" % (epoch, batch_idx, train_loss.avg.item(), 100*train_accuracy.avg.item()))
+
             if args.verbose and SPEED:
                 logger.info("[%d][%d] time: %.3f, speed: %.3f images/s" % (epoch, batch_idx, avg_time/display, args.batch_size/(avg_time/display)))
                 logger.info('Profiling: IO: %.3f, FW+BW: %.3f, COMM: %.3f, KFAC: %.3f, UPDAT: %.3f', np.mean(iotimes), np.mean(fwbwtimes), np.mean(commtimes), np.mean(kfactimes), np.mean(uptimes))
@@ -414,6 +427,8 @@ def train(epoch, model, optimizer, preconditioner, lr_scheduler, criterion, trai
 
     if args.verbose:
         logger.info("[%d] epoch train loss: %.4f, acc: %.3f" % (epoch, train_loss.avg.item(), 100*train_accuracy.avg.item()))
+        if wandb:
+            wandb.log({"train loss": train_loss.avg.item(), "train acc": train_accuracy.avg.item()})
 
     if args.lr_schedule == 'step':
         for scheduler in lr_scheduler:
@@ -440,6 +455,8 @@ def test(epoch, model, criterion, test_loader, args):
             
     if args.verbose:
         logger.info("[%d] evaluation loss: %.4f, acc: %.3f" % (epoch, test_loss.avg.item(), 100*test_accuracy.avg.item()))
+        if wandb:
+            wandb.log({"eval loss": test_loss.avg.item(), "eval acc": test_accuracy.avg.item()})
 
 
 if __name__ == '__main__':

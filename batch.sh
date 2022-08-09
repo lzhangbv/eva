@@ -79,11 +79,3 @@ kfac_name=eva
 #epochs=100 dnn=vgg16 dataset=cifar100 batch_size=512 base_lr=0.4 nworkers=1 kfac_name=eva kfac=0 warmup_epochs=5 clusterprefix=gpu2cluster ./train_cifar100.sh &
 
 
-
-
-# supplement
-lr_schedule=cosine
-stat_decay=0.5
-damping=0.001
-epochs=50 dnn=vgg19 dataset=cifar10 batch_size=128 base_lr=0.1 nworkers=4 kfac_name=eva kfac=1 fac=1 damping=$damping stat_decay=$stat_decay kl_clip=1 warmup_epochs=5 lr_schedule=$lr_schedule momentum=0.9 label_smoothing=0 cutmix=0 autoaugment=0 cutout=0 horovod=0 node_rank=13 ./train_cifar10.sh &
-
