@@ -46,7 +46,7 @@ do
 done
 fi
 
-remote_kill="${remote_kill:-1}"
+remote_kill="${remote_kill:-0}"
 if [ $remote_kill -eq 1 ]; then
 echo "kill remote launched torch processes..."
 node_rank=$node_rank_copy_

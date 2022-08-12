@@ -37,7 +37,8 @@ from utils import *
 
 import kfac
 import kfac.backend as backend #don't use a `from` import
-from kfac.shampoo import Shampoo
+from shampoo.shampoo import Shampoo
+from mfac.optim import MFAC
 
 import horovod.torch as hvd
 import torch.distributed as dist
@@ -86,7 +87,7 @@ def initialize():
     parser.add_argument('--cutout', type=int, default=0, metavar='WE',
                         help='use cutout augment (default: 0)')
     parser.add_argument('--opt-name', type=str, default='sgd', metavar='WE',
-                        help='choose base optimizer [sgd, adam, shampoo]')
+                        help='choose base optimizer [sgd, adam, shampoo, mfac]')
     parser.add_argument('--use-pretrained-model', type=int, default=0, metavar='WE',
                         help='use pretrained model e.g. ViT-B_16 (default: 0)')
     parser.add_argument('--pretrained-dir', type=str, default='/datasets/pretrained_models/',
@@ -159,7 +160,8 @@ def initialize():
     algo = args.kfac_name if args.use_kfac else args.opt_name
     os.makedirs(args.log_dir, exist_ok=True)
     logfile = os.path.join(args.log_dir,
-        '{}_{}_ep{}_bs{}_gpu{}_kfac{}_{}_{}_momentum{}_damping{}_stat{}_clip{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, backend.comm.size(), args.kfac_update_freq, algo, args.lr_schedule, args.momentum, args.damping, args.stat_decay, args.kl_clip))
+        '{}_{}_ep{}_bs{}_gpu{}_kfac{}_{}_{}_lr{}_seed{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, backend.comm.size(), args.kfac_update_freq, algo, args.lr_schedule, args.base_lr, args.seed))
+        #'{}_{}_ep{}_bs{}_gpu{}_kfac{}_{}_{}_momentum{}_damping{}_stat{}_clip{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, backend.comm.size(), args.kfac_update_freq, algo, args.lr_schedule, args.momentum, args.damping, args.stat_decay, args.kl_clip))
 
     hdlr = logging.FileHandler(logfile)
     hdlr.setFormatter(formatter)
@@ -272,12 +274,34 @@ def get_model(args):
                 lr=args.base_lr, 
                 betas=(0.9, 0.999), 
                 weight_decay=args.weight_decay)
+    elif args.opt_name == "adamw":
+        optimizer = optim.AdamW(model.parameters(), 
+                lr=args.base_lr, 
+                betas=(0.9, 0.999), 
+                weight_decay=args.weight_decay)
+    elif args.opt_name == "adagrad":
+        optimizer = optim.Adagrad(model.parameters(), 
+                lr=args.base_lr, 
+                weight_decay=args.weight_decay)
     elif args.opt_name == "shampoo":
         optimizer = Shampoo(params=model.parameters(), 
                     lr=args.base_lr, 
                     momentum=args.momentum, 
-                    weight_decay=args.weight_decay,
-                    update_freq=args.kfac_update_freq)
+                    weight_decay=args.weight_decay, 
+                    statistics_compute_steps=args.kfac_cov_update_freq, 
+                    preconditioning_compute_steps=args.kfac_update_freq)
+    elif args.opt_name == 'mfac':
+        assert backend.comm.size() == 1, "does not support multi-GPU training"
+        dev = torch.device('cuda:0')
+        gpus = [torch.device('cuda:0')] if backend.comm.size() == 1 else [torch.device('cuda:'+str(i)) for i in range(1, backend.comm.size())]
+        optimizer = MFAC(model.parameters(), 
+                lr=args.base_lr, 
+                momentum=args.momentum,
+                weight_decay=args.weight_decay, 
+                ngrads=32, 
+                moddev=dev,
+                optdev=dev,
+                gpus=gpus)
     elif args.opt_name == 'sgd':
         optimizer = optim.SGD(model.parameters(), 
                 lr=args.base_lr, 

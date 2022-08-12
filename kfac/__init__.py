@@ -1,6 +1,5 @@
 from kfac.eva import KFAC as EVA
 from kfac.kfac import KFAC as KFAC 
-from kfac.shampoo import Shampoo
 from kfac.sam import KFAC as SAM
 from kfac.adasgd import KFAC as ADASGD
 from kfac.adasgd import KFAC2 as ADASGD2
@@ -12,7 +11,6 @@ kfac_mappers = {
     'adasgd': ADASGD,
     'adasgd2': ADASGD2,
     'sam': SAM, 
-    'shampoo': Shampoo,
     }
 
 def get_kfac_module(kfac='eva'):

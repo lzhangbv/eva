@@ -21,7 +21,7 @@ import enum
 import itertools
 
 from dataclasses import dataclass
-import matrix_functions
+from shampoo import matrix_functions
 import numpy as np
 import torch
 import torch.optim as optim
@@ -309,9 +309,15 @@ class Shampoo(optim.Optimizer):
                params,
                lr=1.0,
                momentum=0.9,
+               weight_decay=0.0, 
+               statistics_compute_steps=1, 
+               preconditioning_compute_steps=1, 
                hyperparams=ShampooHyperParams()):
     defaults = dict(lr=lr, momentum=momentum)
     self.hps = hyperparams
+    self.hps.weight_decay = weight_decay
+    self.hps.statistics_compute_steps = statistics_compute_steps
+    self.hps.preconditioning_compute_steps = preconditioning_compute_steps
     super(Shampoo, self).__init__(params, defaults)
 
   def init_var_state(self, var, state):
