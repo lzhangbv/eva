@@ -7,6 +7,7 @@ sbatch_logs/
 saved_logs/
 data/
 output/
+debug*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
