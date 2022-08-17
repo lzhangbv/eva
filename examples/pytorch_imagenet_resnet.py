@@ -34,10 +34,16 @@ from tqdm import tqdm
 from distutils.version import LooseVersion
 import imagenet_resnet as models
 import imagenet_inceptionv4 as inceptionv4
+from vit import VisionTransformer, ViT_CONFIGS  
+from efficientnet import EfficientNet
 from utils import *
 
 import kfac
-os.environ['HOROVOD_NUM_NCCL_STREAMS'] = '10' 
+import kfac.backend as backend #don't use a `from` import
+from shampoo.shampoo import Shampoo
+from mfac.optim import MFAC
+
+#os.environ['HOROVOD_NUM_NCCL_STREAMS'] = '10' 
 
 STEP_FIRST = LooseVersion(torch.__version__) < LooseVersion('1.1.0')
 
@@ -81,10 +87,14 @@ def initialize():
                         help='number of warmup epochs')
     parser.add_argument('--momentum', type=float, default=0.9,
                         help='SGD momentum')
-    parser.add_argument('--wd', type=float, default=0.00005,
+    parser.add_argument('--weight-decay', type=float, default=0.00005,
                         help='weight decay')
     parser.add_argument('--label-smoothing', type=float, default=0.1,
                         help='label smoothing (default 0.1)')
+    parser.add_argument('--opt-name', type=str, default='sgd', metavar='WE',
+                        help='choose base optimizer [sgd, adam, shampoo, mfac]')
+    parser.add_argument('--ngrads', type=int, default=32, metavar='WE',
+                        help='number of gradients used to estimate FIM in M-FAC')
 
     # KFAC Parameters
     parser.add_argument('--kfac-name', type=str, default='inverse',
@@ -127,13 +137,11 @@ def initialize():
 
     args = parser.parse_args()
     args.cuda = not args.no_cuda and torch.cuda.is_available()
+    args.use_kfac = True if (args.opt_name == 'sgd' and args.kfac_update_freq > 0) else False
 
     # Comm backend init
     if args.horovod:
-        if args.kfac_name in ["inverse_kaisa", "inverse_dp_hybrid"]:
-            hvd.init(process_sets="dynamic")
-        else:
-            hvd.init()
+        hvd.init()
         backend.init("Horovod")
     else:
         dist.init_process_group(backend='nccl', init_method='env://')
@@ -176,12 +184,9 @@ def initialize():
         args.log_writer = None
     except ImportError:
         args.log_writer = None
-
-    #logfile = './logs/timing_imagenet_thres1024_{}_kfac{}_gpu{}_bs{}_{}_ep_{}.log'.format(args.model, args.kfac_update_freq, hvd.size(), args.batch_size, args.kfac_name, args.exclude_parts)
-    logfile = './logs/imagenet_{}_kfac{}_gpu{}_bs{}_{}_ep_{}.log'.format(args.model, args.kfac_update_freq, backend.comm.size(), args.batch_size, args.kfac_name, args.exclude_parts)
-    #logfile = './logs/inverse_imagenet_resnet50_kfac{}_gpu{}_bs{}.log'.format(args.kfac_update_freq, hvd.size(), args.batch_size)
-    #logfile = './logs/imagenet_resnet50_kfac{}_gpu{}_bs{}.log'.format(args.kfac_update_freq, hvd.size(), args.batch_size)
-    #logfile = './logs/sparse_imagenet_resnet50_kfac{}_gpu{}_bs{}.log'.format(args.kfac_update_freq, hvd.size(), args.batch_size)
+    
+    algo = args.kfac_name if args.use_kfac else args.opt_name
+    logfile = './logs/imagenet_{}_bs{}_gpu{}_kfac{}_{}.log'.format(args.model, args.batch_size, backend.comm.size(), args.kfac_update_freq, algo)
     hdlr = logging.FileHandler(logfile)
     hdlr.setFormatter(formatter)
     logger.addHandler(hdlr) 
@@ -232,7 +237,9 @@ def get_datasets(args):
     return train_sampler, train_loader, val_sampler, val_loader
 
 def get_model(args):
-    if args.model.lower() == 'resnet34':
+    if args.model.lower() == 'resnet18':
+        model = models.resnet18()
+    elif args.model.lower() == 'resnet34':
         model = models.resnet34()
     elif args.model.lower() == 'resnet50':
         model = models.resnet50()
@@ -248,14 +255,26 @@ def get_model(args):
         model = torchvision.models.densenet121(num_classes=1000,pretrained=False)
     elif args.model.lower() == 'densenet201':
         model = torchvision.models.densenet201(num_classes=1000,pretrained=False)
+    elif args.model.lower() == 'vgg11':
+        model = torchvision.models.vgg11(num_classes=1000,pretrained=False)
     elif args.model.lower() == 'vgg16':
         model = torchvision.models.vgg16(num_classes=1000,pretrained=False)
+    elif args.model.lower() == 'vgg19':
+        model = torchvision.models.vgg19(num_classes=1000,pretrained=False)
     elif args.model.lower() == 'inceptionv3':
         model = torchvision.models.inception_v3(num_classes=1000,pretrained=False)
     elif args.model.lower() == 'inceptionv4':
         model = inceptionv4.inceptionv4(num_classes=1000,pretrained=False)
     elif args.model.lower() == 'mobilenetv2':
         model = torchvision.models.mobilenet_v2()
+    elif 'efficientnet' in args.model.lower():
+        model = EfficientNet.from_name(args.model.lower())
+    elif args.model.lower() == "vit-b16":
+        vit_config = ViT_CONFIGS[ "vit-b16"]
+        model = VisionTransformer(vit_config, img_size=224, zero_head=True, num_classes=1000)
+    elif args.model.lower() == "vit-l16":
+        vit_config = ViT_CONFIGS[ "vit-l16"]
+        model = VisionTransformer(vit_config, img_size=224, zero_head=True, num_classes=1000)
     else:
         raise ValueError('Unknown model \'{}\''.format(args.model))
 
@@ -264,11 +283,46 @@ def get_model(args):
 
     # Horovod: scale learning rate by the number of GPUs.
     args.base_lr = args.base_lr * backend.comm.size() * args.batches_per_allreduce
-    optimizer = optim.SGD(model.parameters(), lr=args.base_lr,
-                          momentum=args.momentum, weight_decay=args.wd)
-    #optimizer = optim.Adam(model.parameters(), lr=args.base_lr, betas=(0.9, 0.98), eps=1e-09)
+    if args.opt_name == "adam":
+        optimizer = optim.Adam(model.parameters(), 
+                lr=args.base_lr, 
+                betas=(0.9, 0.999), 
+                weight_decay=args.weight_decay)
+    elif args.opt_name == "adamw":
+        optimizer = optim.AdamW(model.parameters(), 
+                lr=args.base_lr, 
+                betas=(0.9, 0.999), 
+                weight_decay=args.weight_decay)
+    elif args.opt_name == "adagrad":
+        optimizer = optim.Adagrad(model.parameters(), 
+                lr=args.base_lr, 
+                weight_decay=args.weight_decay)
+    elif args.opt_name == "shampoo":
+        optimizer = Shampoo(params=model.parameters(), 
+                    lr=args.base_lr, 
+                    momentum=args.momentum, 
+                    weight_decay=args.weight_decay, 
+                    statistics_compute_steps=args.kfac_cov_update_freq, 
+                    preconditioning_compute_steps=args.kfac_update_freq)
+    elif args.opt_name == 'mfac':
+        assert backend.comm.size() == 1, "does not support multi-GPU training"
+        dev = torch.device('cuda')
+        gpus = [dev]
+        optimizer = MFAC(model.parameters(), 
+                lr=args.base_lr, 
+                momentum=args.momentum,
+                weight_decay=args.weight_decay, 
+                ngrads=args.ngrads, 
+                moddev=dev,
+                optdev=dev,
+                gpus=gpus)
+    elif args.opt_name == 'sgd':
+        optimizer = optim.SGD(model.parameters(), 
+                lr=args.base_lr, 
+                momentum=args.momentum,
+                weight_decay=args.weight_decay)
 
-    if args.kfac_update_freq > 0:
+    if args.use_kfac > 0:
         KFAC = kfac.get_kfac_module(args.kfac_name)
         preconditioner = KFAC(
                 model, lr=args.base_lr, factor_decay=args.stat_decay,
@@ -313,7 +367,7 @@ def get_model(args):
         optimizer.load_state_dict(checkpoint['optimizer'])
 
 
-    lrs = create_lr_schedule(backend.comm.size(), args.warmup_epochs, args.lr_decay)
+    lrs = create_multi_step_lr_schedule(backend.comm.size(), args.warmup_epochs, args.lr_decay)
     lr_scheduler = [LambdaLR(optimizer, lrs)]
     if preconditioner is not None:
         lr_scheduler.append(LambdaLR(preconditioner, lrs))
@@ -331,7 +385,7 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
     train_loss = Metric('train_loss')
     train_accuracy = Metric('train_accuracy')
     avg_time = 0.0
-    display=20
+    display = 50
 
     if STEP_FIRST:
         for scheduler in lr_schedules:
@@ -356,7 +410,9 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
                 data_batch = data[i:i + args.batch_size]
                 target_batch = target[i:i + args.batch_size]
                 output = model(data_batch)
-
+                if type(output) == tuple:
+                    output = output[0]
+                
                 loss = loss_func(output, target_batch)
 
                 with torch.no_grad():
@@ -385,8 +441,6 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
             uptimes.append(updatetime-kfactime)
             avg_time += (time.time()-stime)
 
-            #print("----------Memory Allocated after optimizer.step: %.1f (MB)----------" % (torch.cuda.max_memory_allocated()/1024/1024))
-            
             if batch_idx > 0 and batch_idx % display == 0:
                 if args.verbose and SPEED:
                     logger.info("[%d][%d] loss: %.4f, acc: %.2f, time: %.3f, speed: %.3f images/s" % (epoch, batch_idx, train_loss.avg.item(), 100*train_accuracy.avg.item(), avg_time/display, args.batch_size/(avg_time/display)))
@@ -394,9 +448,10 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
                     iotimes = [];fwbwtimes=[];kfactimes=[];commtimes=[]
                 ittimes.append(avg_time/display)
                 avg_time = 0.0
-            if batch_idx > 120 and SPEED:
+            if batch_idx > 6 * display and SPEED:
                 if args.verbose:
                     logger.info("Iteration time: mean %.3f, std: %.3f" % (np.mean(ittimes[1:]),np.std(ittimes[1:])))
+                    logger.info("Max memory allocated %.1f MB" % (torch.cuda.max_memory_allocated()/1024/1024))
                 break
         if args.verbose:
             logger.info("[%d] epoch train loss: %.4f, acc: %.3f" % (epoch, train_loss.avg.item(), 100*train_accuracy.avg.item()))

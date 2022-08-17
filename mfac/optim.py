@@ -57,7 +57,8 @@ class HInvFastUpMulti:
     def setup(self):
         self.giHig = self.lambd * self.dots
         diag = torch.diag(torch.full([self.m], self.m, device=self.dev, dtype=self.dtype))
-        self.giHig = torch.lu(self.giHig + diag, pivot=False)[0]
+        #self.giHig = torch.lu(self.giHig + diag, pivot=False)[0]
+        self.giHig = torch.lu(self.giHig + diag)[0]
         self.giHig = torch.triu(self.giHig - diag)
         self.denom = self.m + torch.diagonal(self.giHig)
         tmp = -self.giHig.t().contiguous() / self.denom.reshape((1, -1))

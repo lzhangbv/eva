@@ -29,7 +29,7 @@ class KFAC(optim.Optimizer):
                  fac_update_freq=1,  
                  kfac_update_freq=1,
                  kfac_batch_size=16,
-                 diag_blocks=4,
+                 diag_blocks=1,
                  kl_clip=0.001,
                  factor_decay=0.95,
                  exclude_vocabulary_size=None,
