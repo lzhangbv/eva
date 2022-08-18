@@ -451,7 +451,7 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
             if batch_idx > 6 * display and SPEED:
                 if args.verbose:
                     logger.info("Iteration time: mean %.3f, std: %.3f" % (np.mean(ittimes[1:]),np.std(ittimes[1:])))
-                    logger.info("Max memory allocated %.1f MB" % (torch.cuda.max_memory_allocated()/1024/1024))
+                    #logger.info("Max memory allocated %.1f MB" % (torch.cuda.max_memory_allocated()/1024/1024))
                 break
         if args.verbose:
             logger.info("[%d] epoch train loss: %.4f, acc: %.3f" % (epoch, train_loss.avg.item(), 100*train_accuracy.avg.item()))

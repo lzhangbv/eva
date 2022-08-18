@@ -160,8 +160,8 @@ def initialize():
     algo = args.kfac_name if args.use_kfac else args.opt_name
     os.makedirs(args.log_dir, exist_ok=True)
     logfile = os.path.join(args.log_dir,
-        '{}_{}_ep{}_bs{}_gpu{}_kfac{}_{}_{}_lr{}_seed{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, backend.comm.size(), args.kfac_update_freq, algo, args.lr_schedule, args.base_lr, args.seed))
-        #'{}_{}_ep{}_bs{}_gpu{}_kfac{}_{}_{}_momentum{}_damping{}_stat{}_clip{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, backend.comm.size(), args.kfac_update_freq, algo, args.lr_schedule, args.momentum, args.damping, args.stat_decay, args.kl_clip))
+        '{}_{}_ep{}_bs{}_lr{}_gpu{}_kfac{}_{}_{}_momentum{}_damping{}_stat{}_clip{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, args.base_lr, backend.comm.size(), args.kfac_update_freq, algo, args.lr_schedule, args.momentum, args.damping, args.stat_decay, args.kl_clip))
+        #'{}_{}_ep{}_bs{}_gpu{}_kfac{}_{}_{}_lr{}_seed{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, backend.comm.size(), args.kfac_update_freq, algo, args.lr_schedule, args.base_lr, args.seed))
 
     hdlr = logging.FileHandler(logfile)
     hdlr.setFormatter(formatter)
