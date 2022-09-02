@@ -30,7 +30,7 @@ use_pretrained_model="${use_pretrained_model:-0}"
 kfac="${kfac:-1}"
 fac="${fac:-1}"
 kfac_name="${kfac_name:-eva}"
-damping="${damping:-0.001}"
+damping="${damping:-0.03}"
 stat_decay="${stat_decay:-0.95}"
 kl_clip="${kl_clip:-0.001}"
 

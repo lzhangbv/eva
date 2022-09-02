@@ -16,9 +16,6 @@ strhdlr = logging.StreamHandler()
 strhdlr.setFormatter(formatter)
 logger.addHandler(strhdlr) 
 
-import wandb
-wandb = False
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -43,6 +40,8 @@ from mfac.optim import MFAC
 import horovod.torch as hvd
 import torch.distributed as dist
 
+import wandb
+wandb = False
 SPEED = False
 
 def initialize():
@@ -65,7 +64,7 @@ def initialize():
     parser.add_argument('--base-lr', type=float, default=0.1, metavar='LR',
                         help='base learning rate (default: 0.1)')
     parser.add_argument('--lr-schedule', type=str, default='step', 
-                        choices=['step', 'polynomial', 'cosine'], help='learning rate schedules')
+                        choices=['step', 'linear', 'polynomial', 'cosine'], help='learning rate schedules')
     parser.add_argument('--lr-decay', nargs='+', type=float, default=[0.5, 0.75],
                         help='epoch intervals to decay lr when using step schedule')
     parser.add_argument('--lr-decay-alpha', type=float, default=0.1,
@@ -100,7 +99,7 @@ def initialize():
                         help='choices: %s' % kfac.kfac_mappers.keys() + ', default: '+'inverse')
     parser.add_argument('--exclude-parts', type=str, default='',
                         help='choices: ComputeFactor,CommunicateFactor,ComputeInverse,CommunicateInverse')
-    parser.add_argument('--kfac-update-freq', type=int, default=10,
+    parser.add_argument('--kfac-update-freq', type=int, default=1,
                         help='iters between kfac inv ops (0 for no kfac updates) (default: 10)')
     parser.add_argument('--kfac-cov-update-freq', type=int, default=1,
                         help='iters between kfac cov ops (default: 1)')
@@ -108,8 +107,8 @@ def initialize():
                         help='Alpha value for covariance accumulation (default: 0.95)')
     parser.add_argument('--damping', type=float, default=0.03,
                         help='KFAC damping factor (defaultL 0.03)')
-    parser.add_argument('--kl-clip', type=float, default=0.01,
-                        help='KL clip (default: 0.01)')
+    parser.add_argument('--kl-clip', type=float, default=0.001,
+                        help='KL clip (default: 0.001)')
 
     # Other Parameters
     parser.add_argument('--log-dir', default='./logs',
@@ -345,10 +344,13 @@ def get_model(args):
     # Learning Rate Schedule
     if args.lr_schedule == 'cosine':
         lrs = create_cosine_lr_schedule(args.warmup_epochs * args.num_steps_per_epoch, args.epochs * args.num_steps_per_epoch)
+    elif args.lr_schedule == 'linear':
+        lrs = create_polynomial_lr_schedule(args.base_lr, args.warmup_epochs * args.num_steps_per_epoch, args.epochs * args.num_steps_per_epoch, lr_end=0.0, power=1.0)
     elif args.lr_schedule == 'polynomial':
         lrs = create_polynomial_lr_schedule(args.base_lr, args.warmup_epochs * args.num_steps_per_epoch, args.epochs * args.num_steps_per_epoch, lr_end=0.0, power=2.0)
     elif args.lr_schedule == 'step':
-        lrs = create_multi_step_lr_schedule(backend.comm.size(), args.warmup_epochs, args.lr_decay, args.lr_decay_alpha)
+        #lrs = create_multi_step_lr_schedule(backend.comm.size(), args.warmup_epochs, args.lr_decay, args.lr_decay_alpha)
+        lrs = create_multi_step_lr_schedule(max(4, backend.comm.size()), args.warmup_epochs, args.lr_decay, args.lr_decay_alpha)
     
     lr_scheduler = [LambdaLR(optimizer, lrs)]
     if preconditioner is not None:
@@ -440,7 +442,7 @@ def train(epoch, model, optimizer, preconditioner, lr_scheduler, criterion, trai
             ittimes.append(avg_time/display)
             avg_time = 0.0
 
-        if batch_idx >= 60 and SPEED:
+        if batch_idx >= (display * 6) and SPEED:
             if args.verbose:
                 logger.info("Iteration time: mean %.3f, std: %.3f" % (np.mean(ittimes[1:]),np.std(ittimes[1:])))
             break

@@ -101,8 +101,8 @@ def initialize():
             help='choises: %s' % kfac.kfac_mappers.keys() + ', default: '+'inverse')
     parser.add_argument('--exclude-parts', type=str, default='',
             help='choises: CommunicateInverse,ComputeInverse,CommunicateFactor,ComputeFactor')
-    parser.add_argument('--kfac-update-freq', type=int, default=10,
-                        help='iters between kfac inv ops (0 = no kfac) (default: 10)')
+    parser.add_argument('--kfac-update-freq', type=int, default=1,
+                        help='iters between kfac inv ops (0 = no kfac) (default: 1)')
     parser.add_argument('--kfac-cov-update-freq', type=int, default=1,
                         help='iters between kfac cov ops (default: 1)')
     parser.add_argument('--kfac-update-freq-alpha', type=float, default=10,
@@ -117,8 +117,8 @@ def initialize():
                         help='KFAC damping decay factor (default: 0.5)')
     parser.add_argument('--damping-decay', nargs='+', type=int, default=[40, 80],
                         help='KFAC damping decay schedule (default [40, 80])')
-    parser.add_argument('--kl-clip', type=float, default=0.01,
-                        help='KL clip (default: 0.01)')
+    parser.add_argument('--kl-clip', type=float, default=0.001,
+                        help='KL clip (default: 0.001)')
     parser.add_argument('--diag-blocks', type=int, default=1,
                         help='Number of blocks to approx layer factor with (default: 1)')
     parser.add_argument('--diag-warmup', type=int, default=0,

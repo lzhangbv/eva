@@ -17,7 +17,7 @@ strhdlr.setFormatter(formatter)
 logger.addHandler(strhdlr) 
 
 import wandb
-wandb = False
+#wandb = False
 
 import torch
 import torch.nn as nn
@@ -57,7 +57,7 @@ def initialize():
     parser.add_argument('--base-lr', type=float, default=0.1, metavar='LR',
                         help='base learning rate (default: 0.1)')
     parser.add_argument('--lr-schedule', type=str, default='step', 
-                        choices=['step', 'polynomial', 'cosine'], help='learning rate schedules')
+                        choices=['step', 'linear', 'polynomial', 'cosine'], help='learning rate schedules')
     parser.add_argument('--lr-decay', nargs='+', type=float, default=[0.5, 0.75],
                         help='epoch intervals to decay lr when using step schedule')
     parser.add_argument('--lr-decay-alpha', type=float, default=0.1,
@@ -80,7 +80,7 @@ def initialize():
                         help='choices: %s' % kfac.kfac_mappers.keys() + ', default: '+'inverse')
     parser.add_argument('--exclude-parts', type=str, default='',
                         help='choices: ComputeFactor,CommunicateFactor,ComputeInverse,CommunicateInverse')
-    parser.add_argument('--kfac-update-freq', type=int, default=10,
+    parser.add_argument('--kfac-update-freq', type=int, default=1,
                         help='iters between kfac inv ops (0 for no kfac updates) (default: 10)')
     parser.add_argument('--kfac-cov-update-freq', type=int, default=1,
                         help='iters between kfac cov ops (default: 1)')
@@ -88,8 +88,8 @@ def initialize():
                         help='Alpha value for covariance accumulation (default: 0.95)')
     parser.add_argument('--damping', type=float, default=0.03,
                         help='KFAC damping factor (defaultL 0.03)')
-    parser.add_argument('--kl-clip', type=float, default=0.01,
-                        help='KL clip (default: 0.01)')
+    parser.add_argument('--kl-clip', type=float, default=0.001,
+                        help='KL clip (default: 0.001)')
 
     # Other Parameters
     parser.add_argument('--log-dir', default='./logs',
@@ -140,7 +140,7 @@ def initialize():
     algo = args.kfac_name if args.use_kfac else args.opt_name
     os.makedirs(args.log_dir, exist_ok=True)
     logfile = os.path.join(args.log_dir,
-        '{}_{}_ep{}_bs{}_lr{}_gpu{}_kfac{}_{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, args.base_lr, backend.comm.size(), args.kfac_update_freq, algo))
+        '{}_{}_ep{}_bs{}_lr{}_gpu{}_kfac{}_{}_{}_clip{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, args.base_lr, backend.comm.size(), args.kfac_update_freq, algo, args.lr_schedule, args.kl_clip))
 
     hdlr = logging.FileHandler(logfile)
     hdlr.setFormatter(formatter)
@@ -174,22 +174,22 @@ def get_dataset(args):
     # Use DistributedSampler to partition the training data.
     train_sampler = torch.utils.data.distributed.DistributedSampler(
             train_dataset, num_replicas=backend.comm.size(), rank=backend.comm.rank())
-    # train_loader = MultiEpochsDataLoader(train_dataset,
-    train_loader = torch.utils.data.DataLoader(train_dataset,
+    train_loader = MultiEpochsDataLoader(train_dataset,
+    #train_loader = torch.utils.data.DataLoader(train_dataset,
             batch_size=args.batch_size, sampler=train_sampler, **kwargs)
 
     # Use DistributedSampler to partition the test data.
     test_sampler = torch.utils.data.distributed.DistributedSampler(
             test_dataset, num_replicas=backend.comm.size(), rank=backend.comm.rank())
-    # test_loader = MultiEpochsDataLoader(test_dataset, 
-    test_loader = torch.utils.data.DataLoader(test_dataset, 
+    test_loader = MultiEpochsDataLoader(test_dataset, 
+    #test_loader = torch.utils.data.DataLoader(test_dataset, 
             batch_size=args.test_batch_size, sampler=test_sampler, **kwargs)
     
     return train_sampler, train_loader, test_sampler, test_loader
 
 
 class Autoencoder(nn.Module):
-    def __init__(self, mode):
+    def __init__(self):
         super(Autoencoder, self).__init__()
         self.fc1 = nn.Linear(784, 1000)
         self.fc2 = nn.Linear(1000, 500)
@@ -212,7 +212,7 @@ class Autoencoder(nn.Module):
         x = F.relu(self.fc6(x))
         x = F.relu(self.fc7(x))
         x = self.fc8(x)
-        return x.view(-1, 28, 28)
+        return x.view(-1, 1, 28, 28)
 
 def get_model(args):
     model = Autoencoder()
@@ -253,7 +253,7 @@ def get_model(args):
                 lr=args.base_lr, 
                 momentum=args.momentum,
                 weight_decay=args.weight_decay, 
-                ngrads=32, 
+                ngrads=128, 
                 moddev=dev,
                 optdev=dev,
                 gpus=gpus)
@@ -300,6 +300,8 @@ def get_model(args):
     # Learning Rate Schedule
     if args.lr_schedule == 'cosine':
         lrs = create_cosine_lr_schedule(args.warmup_epochs * args.num_steps_per_epoch, args.epochs * args.num_steps_per_epoch)
+    elif args.lr_schedule == 'linear':
+        lrs = create_polynomial_lr_schedule(args.base_lr, args.warmup_epochs * args.num_steps_per_epoch, args.epochs * args.num_steps_per_epoch, lr_end=0.0, power=1.0)
     elif args.lr_schedule == 'polynomial':
         lrs = create_polynomial_lr_schedule(args.base_lr, args.warmup_epochs * args.num_steps_per_epoch, args.epochs * args.num_steps_per_epoch, lr_end=0.0, power=2.0)
     elif args.lr_schedule == 'step':
@@ -345,7 +347,6 @@ def train(epoch, model, optimizer, preconditioner, lr_scheduler, criterion, trai
                 optimizer.step()
         else:
             optimizer.step()
-        avg_time += (time.time()-stime)
             
         if (batch_idx + 1) % display == 0:
             if args.verbose:
