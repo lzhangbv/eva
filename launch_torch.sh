@@ -9,6 +9,14 @@ script="${script:-}"
 params="${params:-}"
 echo "launch dir: $directory"
 
+# network config
+rdma="${rdma:-1}"
+if [ "$rdma" = "0" ]; then
+    net_config="export NCCL_SOCKET_IFNAME=$ETH_INTERFACE; export NCCL_IB_DISABLE=1;"
+else
+    net_config="export NCCL_SOCKET_IFNAME=$IB_INTERFACE; export NCCL_IB_DISABLE=0;"
+fi
+
 # cluster settings
 total_host=16
 hosts=('gpu1' 'gpu2' 'gpu3' 'gpu4' 'gpu5' 'gpu6' 'gpu7' 'gpu8' 'gpu9' 'gpu10' 'gpu11' 'gpu12' 'gpu13' 'gpu14' 'gpu15' 'gpu16')
@@ -46,7 +54,7 @@ do
 done
 fi
 
-remote_kill="${remote_kill:-0}"
+remote_kill="${remote_kill:-1}"
 if [ $remote_kill -eq 1 ]; then
 echo "kill remote launched torch processes..."
 node_rank=$node_rank_copy_

@@ -138,9 +138,9 @@ class KFAC(optim.Optimizer):
             g = (mg.T @ mg).item()
             ag = (mg.T @ grad @ ma).item()
             
-            #if backend.comm.rank() == 0:
+            #if backend.comm.rank() == 0 and self.steps % 60 == 0:
             #    logger.info("a: %f, g: %f, ag: %f" % (a, g, ag))
-            #    logger.info("ag/(a * g + damping): %f", ag/(a * g + self.damping))
+            #    logger.info("beta: %f", ag/(a * g + self.damping))
 
             # compute preconditioned grads
             v = (mg @ ma.T).mul_(-ag/(a * g + self.damping))

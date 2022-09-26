@@ -18,7 +18,9 @@ formatter = logging.Formatter('%(asctime)s [%(filename)s:%(lineno)d] %(levelname
 strhdlr.setFormatter(formatter)
 logger.addHandler(strhdlr) 
 
-SPEED = True
+import wandb
+wandb=False
+SPEED = False
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -111,12 +113,12 @@ def initialize():
                         help='KFAC update freq schedule (default None)')
     parser.add_argument('--stat-decay', type=float, default=0.95,
                         help='Alpha value for covariance accumulation (default: 0.95)')
-    parser.add_argument('--damping', type=float, default=0.03,
-                        help='KFAC damping factor (default 0.03)')
+    parser.add_argument('--damping', type=float, default=0.001,
+                        help='KFAC damping factor (default 0.001)')
     parser.add_argument('--damping-alpha', type=float, default=0.5,
                         help='KFAC damping decay factor (default: 0.5)')
-    parser.add_argument('--damping-decay', nargs='+', type=int, default=[40, 80],
-                        help='KFAC damping decay schedule (default [40, 80])')
+    parser.add_argument('--damping-decay', nargs='+', type=int, default=None,
+                        help='KFAC damping decay schedule (default None)')
     parser.add_argument('--kl-clip', type=float, default=0.001,
                         help='KL clip (default: 0.001)')
     parser.add_argument('--diag-blocks', type=int, default=1,
@@ -186,12 +188,16 @@ def initialize():
         args.log_writer = None
     
     algo = args.kfac_name if args.use_kfac else args.opt_name
+    #logfile = './logs/debug_imagenet_{}_lr{}_bs{}_gpu{}_kfac{}_{}_damping{}.log'.format(args.model, args.base_lr, args.batch_size, backend.comm.size(), args.kfac_update_freq, algo, args.damping)
     logfile = './logs/imagenet_{}_bs{}_gpu{}_kfac{}_{}.log'.format(args.model, args.batch_size, backend.comm.size(), args.kfac_update_freq, algo)
     hdlr = logging.FileHandler(logfile)
     hdlr.setFormatter(formatter)
     logger.addHandler(hdlr) 
     if args.verbose:
         logger.info(args)
+    
+    if args.verbose and wandb:
+        wandb.init(project="kfac", entity="hkust-distributedml", name=logfile, config=args)
 
     return args
 
@@ -333,13 +339,13 @@ def get_model(args):
                 #diag_warmup=args.diag_warmup,
                 #distribute_layer_factors=args.distribute_layer_factors, 
                 exclude_parts=args.exclude_parts)
-        kfac_param_scheduler = kfac.KFACParamScheduler(
-                preconditioner,
-                damping_alpha=args.damping_alpha,
-                damping_schedule=args.damping_decay,
-                update_freq_alpha=args.kfac_update_freq_alpha,
-                update_freq_schedule=args.kfac_update_freq_decay,
-                start_epoch=args.resume_from_epoch)
+        #kfac_param_scheduler = kfac.KFACParamScheduler(
+        #        preconditioner,
+        #        damping_alpha=args.damping_alpha,
+        #        damping_schedule=args.damping_decay,
+        #        update_freq_alpha=args.kfac_update_freq_alpha,
+        #        update_freq_schedule=args.kfac_update_freq_decay,
+        #        start_epoch=args.resume_from_epoch)
     else:
         preconditioner = None
 
@@ -371,7 +377,7 @@ def get_model(args):
     lr_scheduler = [LambdaLR(optimizer, lrs)]
     if preconditioner is not None:
         lr_scheduler.append(LambdaLR(preconditioner, lrs))
-        lr_scheduler.append(kfac_param_scheduler)
+        #lr_scheduler.append(kfac_param_scheduler)
 
     loss_func = LabelSmoothLoss(args.label_smoothing)
 
@@ -442,6 +448,11 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
             avg_time += (time.time()-stime)
 
             if batch_idx > 0 and batch_idx % display == 0:
+                if args.verbose:
+                    logger.info("[%d][%d] train loss: %.4f, acc: %.3f" % (epoch, batch_idx, train_loss.avg.item(), 100*train_accuracy.avg.item()))
+                    #if wandb:
+                    #    wandb.log({"train loss": train_loss.avg.item(), "train acc": train_accuracy.avg.item()})
+                
                 if args.verbose and SPEED:
                     logger.info("[%d][%d] loss: %.4f, acc: %.2f, time: %.3f, speed: %.3f images/s" % (epoch, batch_idx, train_loss.avg.item(), 100*train_accuracy.avg.item(), avg_time/display, args.batch_size/(avg_time/display)))
                     logger.info('Profiling: IO: %.3f, FW+BW: %.3f, COMM: %.3f, KFAC: %.3f, STEP: %.3f', np.mean(iotimes), np.mean(fwbwtimes), np.mean(commtimes), np.mean(kfactimes), np.mean(uptimes))
@@ -455,6 +466,8 @@ def train(epoch, model, optimizer, preconditioner, lr_schedules, lrs,
                 break
         if args.verbose:
             logger.info("[%d] epoch train loss: %.4f, acc: %.3f" % (epoch, train_loss.avg.item(), 100*train_accuracy.avg.item()))
+            if wandb:
+                wandb.log({"train loss": train_loss.avg.item(), "train acc": train_accuracy.avg.item()})
 
     if not STEP_FIRST:
         for scheduler in lr_schedules:
@@ -484,6 +497,8 @@ def validate(epoch, model, loss_func, val_loader, args):
                 val_accuracy.update(accuracy(output, target))
             if args.verbose:
                 logger.info("[%d][0] evaluation loss: %.4f, acc: %.3f" % (epoch, val_loss.avg.item(), 100*val_accuracy.avg.item()))
+                if wandb:
+                    wandb.log({"eval loss": val_loss.avg.item(), "eval acc": val_accuracy.avg.item()})
 
                 #t.update(1)
                 #if i + 1 == len(val_loader):

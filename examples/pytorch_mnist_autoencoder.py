@@ -17,7 +17,7 @@ strhdlr.setFormatter(formatter)
 logger.addHandler(strhdlr) 
 
 import wandb
-#wandb = False
+wandb = False
 
 import torch
 import torch.nn as nn
