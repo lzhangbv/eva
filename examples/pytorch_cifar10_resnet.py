@@ -484,7 +484,21 @@ def test(epoch, model, criterion, test_loader, args):
         if wandb:
             wandb.log({"eval loss": test_loss.avg.item(), "eval acc": test_accuracy.avg.item()})
 
-
+def generate_random_KFs(args, model, criterion, preconditioner):
+    # random input
+    data = torch.rand(args.batch_size, 3, 32, 32)
+    if args.cuda:
+        data = data.cuda()
+    output = model(data)
+    target = generate_pseudo_labels(output)
+    # backward
+    loss = criterion(output, target)
+    loss.backward()
+    # preconditioning
+    preconditioner.step()
+    if args.verbose:
+        logger.info("Generate random KFs.")
+         
 if __name__ == '__main__':
     torch.multiprocessing.set_start_method('spawn')
     #torch.multiprocessing.set_start_method('forkserver')
@@ -494,9 +508,11 @@ if __name__ == '__main__':
     train_sampler, train_loader, _, test_loader = get_dataset(args)
     args.num_steps_per_epoch = len(train_loader)
     model, optimizer, preconditioner, lr_scheduler, criterion = get_model(args)
+    
+    # what if using random KFs
+    #generate_random_KFs(args, model, criterion, preconditioner)
 
     start = time.time()
-
     for epoch in range(args.epochs):
         stime = time.time()
         train(epoch, model, optimizer, preconditioner, lr_scheduler, criterion, train_sampler, train_loader, args)
