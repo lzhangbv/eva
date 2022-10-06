@@ -35,6 +35,7 @@ from utils import *
 import kfac
 import kfac.backend as backend #don't use a `from` import
 from shampoo.shampoo import Shampoo
+from shampoo.vshampoo import vShampoo
 from mfac.optim import MFAC
 
 import horovod.torch as hvd
@@ -289,6 +290,14 @@ def get_model(args):
                     weight_decay=args.weight_decay, 
                     statistics_compute_steps=args.kfac_cov_update_freq, 
                     preconditioning_compute_steps=args.kfac_update_freq)
+    elif args.opt_name == "vshampoo":
+        optimizer = vShampoo(params=model.parameters(), 
+                    lr=args.base_lr, 
+                    momentum=args.momentum, 
+                    weight_decay=args.weight_decay, 
+                    statistics_compute_steps=args.kfac_update_freq, 
+                    damping=args.damping,
+                    beta2=args.stat_decay)
     elif args.opt_name == 'mfac':
         assert backend.comm.size() == 1, "does not support multi-GPU training"
         dev = torch.device('cuda:0')
