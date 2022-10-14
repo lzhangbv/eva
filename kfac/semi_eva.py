@@ -11,7 +11,7 @@ logger = logging.getLogger()
 
 
 class KFAC(optim.Optimizer):
-    """Accelerate Distributed K-FAC with Sublinear Memory Cost
+    """Precondition the gradient with half of KVs. 
     Args:
       model (nn): Torch model
       lr (float): learning rate (default: 0.1)
@@ -83,21 +83,6 @@ class KFAC(optim.Optimizer):
             if backend.comm.size() > 1:
                 self.handles.append(backend.comm.allreduce_async_(self.m_a[module], op=backend.comm.Average))
 
-    def _backward_hook_event(self, module, grad_input, grad_output):
-        """Default: hook for saving gradient w.r.t output (g)"""
-        if self.hook_enabled and self.steps % self.fac_update_freq == 0:
-            with torch.no_grad():
-                new = get_vector_g(grad_output[0].data[0:self.kfac_batch_size], module)
-                if module not in self.m_g:
-                    self.m_g[module] = new
-                else:
-                    #self.m_g[module].mul_(self.factor_decay).add_(new, alpha=1-self.factor_decay)
-                    self.m_g[module].mul_(1-self.factor_decay).add_(new, alpha=self.factor_decay)
-                    #xi =  math.pow(self.steps+1, -self.factor_decay)
-                    #self.m_g[module].mul_(1-xi).add_(new, alpha=xi)
-            if backend.comm.size() > 1:
-                self.handles.append(backend.comm.allreduce_async_(self.m_g[module], op=backend.comm.Average))
-
     def _register_module_hooks(self, model):
         """Register forard/backward hooks to supported modules"""
         supported_modules = {'Linear', 'Conv2d'}
@@ -109,8 +94,6 @@ class KFAC(optim.Optimizer):
                     continue # exclude the pre-softmax linear layer in the Transformer model
                 self.modules.append(module)
                 module.register_forward_pre_hook(self._forward_hook_event)
-                module.register_backward_hook(self._backward_hook_event)  # used in pytorch1.4, and pytorch1.8 (full_backward_hook is not fired when its grad_input is None)
-                #module.register_full_backward_hook(self._backward_hook_event)  # used in pytorch1.10
                 module_name = 'module_name_%s_%d' % (classname, name_idx)
                 self.module_names.append(module_name)
                 name_idx += 1
@@ -125,9 +108,8 @@ class KFAC(optim.Optimizer):
         vg_sum = 0
 
         for module in self.modules:
-            # get ma, mg, grad
+            # get ma, grad
             ma = self.m_a[module].view(-1, 1)
-            mg = self.m_g[module].view(-1, 1)
             grad = self._get_grad(module)
             
             #if backend.comm.rank() == 0:
@@ -135,20 +117,15 @@ class KFAC(optim.Optimizer):
             
             # compute intermediate states
             a = (ma.T @ ma).item()
-            g = (mg.T @ mg).item()
-            ag = (mg.T @ grad @ ma).item()
             
-            #if backend.comm.rank() == 0 and self.steps % 60 == 0:
-            #    logger.info("a: %f, g: %f, ag: %f" % (a, g, ag))
-            #    logger.info("beta: %f", ag/(a * g + self.damping))
-
             # compute preconditioned grads
             if self.damping > 0: # use Sherman-Morrison formula
-                v = (mg @ ma.T).mul_(-ag/(a * g + self.damping))
+                v = (grad @ ma @ ma.T).mul_(-1.0 / (a + self.damping))
                 v.add_(grad)
                 #v.div_(self.damping)  # enable or disable it
             else: # use Moore-Penrose inverse
-                v = (mg @ ma.T).mul_(ag/(a * g * a * g + 1e-8))
+                ma.div_(a + 1e-8)
+                v = grad @ ma @ ma.T
                 #if backend.comm.rank() == 0:
                 #    logger.info("v.sum(): %f" % (torch.abs(v).sum()))
 
