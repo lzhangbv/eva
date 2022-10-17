@@ -77,8 +77,8 @@ class KFAC(optim.Optimizer):
         """Default: hook for saving KFs (A)"""
         if self.hook_enabled and torch.is_grad_enabled() and self.steps % self.fac_update_freq == 0:
             with torch.no_grad():
-                #new = get_factor_A(input[0].data[0:self.kfac_batch_size], module)
-                new = get_factor_A(input[0].data, module) # no kfac subsampling
+                new = get_factor_A(input[0].data[0:self.kfac_batch_size], module)
+                #new = get_factor_A(input[0].data, module) # no kfac subsampling
                 if module not in self.m_A:
                     self.m_A[module] = new
                 else:
@@ -146,10 +146,15 @@ class KFAC(optim.Optimizer):
                 #dA = dA[0:topk]
                 #QA = QA[:, 0:topk]
 
-            # compute preconditioned grads
-            dA = torch.diag(1.0 / (dA + self.damping))
+            # compute preconditioned grads (not working with low rank)
+            #dA = torch.diag(1.0 / (dA + self.damping))
             #dA = torch.diag(torch.pow(dA + self.damping, -1/4))
+            #v = grad @ QA @ dA @ QA.t()
+
+            # compute residual preconditioned grads
+            dA = torch.diag(1.0 / (dA + self.damping) - 1.0 / self.damping)
             v = grad @ QA @ dA @ QA.t()
+            v.add_(grad, alpha=1.0/self.damping)
 
             # re-scale preconditioned grads
             if module.bias is not None:
