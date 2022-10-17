@@ -110,6 +110,8 @@ def initialize():
                         help='KFAC damping factor (defaultL 0.03)')
     parser.add_argument('--kl-clip', type=float, default=0.001,
                         help='KL clip (default: 0.001)')
+    parser.add_argument('--topk', type=int, default=0,
+                        help='Topk eigen-decomposition (default: 0)')
 
     # Other Parameters
     parser.add_argument('--log-dir', default='./logs',
@@ -160,8 +162,8 @@ def initialize():
     algo = args.kfac_name if args.use_kfac else args.opt_name
     os.makedirs(args.log_dir, exist_ok=True)
     logfile = os.path.join(args.log_dir,
-        '{}_{}_ep{}_bs{}_lr{}_gpu{}_kfac{}_{}_{}_momentum{}_damping{}_stat{}_clip{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, args.base_lr, backend.comm.size(), args.kfac_update_freq, algo, args.lr_schedule, args.momentum, args.damping, args.stat_decay, args.kl_clip))
-        #'{}_{}_ep{}_bs{}_gpu{}_kfac{}_{}_{}_lr{}_seed{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, backend.comm.size(), args.kfac_update_freq, algo, args.lr_schedule, args.base_lr, args.seed))
+        #'{}_{}_ep{}_bs{}_lr{}_gpu{}_kfac{}_{}_{}_momentum{}_damping{}_stat{}_clip{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, args.base_lr, backend.comm.size(), args.kfac_update_freq, algo, args.lr_schedule, args.momentum, args.damping, args.stat_decay, args.kl_clip))
+        '{}_{}_ep{}_bs{}_lr{}_gpu{}_kfac{}_{}_top{}_{}_momentum{}_damping{}_stat{}_clip{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, args.base_lr, backend.comm.size(), args.kfac_update_freq, algo, args.topk, args.lr_schedule, args.momentum, args.damping, args.stat_decay, args.kl_clip))
 
     hdlr = logging.FileHandler(logfile)
     hdlr.setFormatter(formatter)
@@ -326,6 +328,17 @@ def get_model(args):
                 fac_update_freq=args.kfac_cov_update_freq, 
                 kfac_update_freq=args.kfac_update_freq, 
                 exclude_parts=args.exclude_parts)
+        if args.kfac_name == 'semi-kfac':
+            preconditioner = KFAC(model, 
+                lr=args.base_lr, 
+                factor_decay=args.stat_decay, 
+                damping=args.damping, 
+                kl_clip=args.kl_clip, 
+                fac_update_freq=args.kfac_cov_update_freq, 
+                kfac_update_freq=args.kfac_update_freq, 
+                topk=args.topk,
+                exclude_parts=args.exclude_parts)
+
         #kfac_param_scheduler = kfac.KFACParamScheduler(
         #        preconditioner,
         #        damping_alpha=1,

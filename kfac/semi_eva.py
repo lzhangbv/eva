@@ -123,7 +123,7 @@ class KFAC(optim.Optimizer):
                 v = (grad @ ma @ ma.T).mul_(-1.0 / (a + self.damping))
                 v.add_(grad)
                 #v.div_(self.damping)  # enable or disable it
-            else: # use Moore-Penrose inverse
+            else: # use Moore-Penrose inverse (not working)
                 ma.div_(a + 1e-8)
                 v = grad @ ma @ ma.T
                 #if backend.comm.rank() == 0:

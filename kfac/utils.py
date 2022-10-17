@@ -97,3 +97,7 @@ def get_factor_G(g, layer):
 def mat_inv(x):
     u = torch.linalg.cholesky(x)
     return torch.cholesky_inverse(u)
+
+def mat_eig(x):
+    eigen_val, eigen_vec = torch.linalg.eigh(x)
+    return eigen_val, eigen_vec.contiguous()

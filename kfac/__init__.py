@@ -1,6 +1,7 @@
 from kfac.eva import KFAC as EVA
 from kfac.semi_eva import KFAC as SEMI_EVA
 from kfac.kfac import KFAC as KFAC 
+from kfac.semi_kfac_eigen import KFAC as SEMI_KFAC
 from kfac.sam import KFAC as SAM
 from kfac.adasgd import KFAC as ADASGD
 from kfac.adasgd import KFAC2 as ADASGD2
@@ -10,6 +11,7 @@ kfac_mappers = {
     'eva': EVA,
     'semi-eva': SEMI_EVA,
     'kfac': KFAC,
+    'semi-kfac': SEMI_KFAC,
     'adasgd': ADASGD,
     'adasgd2': ADASGD2,
     'sam': SAM, 

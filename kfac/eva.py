@@ -147,7 +147,7 @@ class KFAC(optim.Optimizer):
                 v = (mg @ ma.T).mul_(-ag/(a * g + self.damping))
                 v.add_(grad)
                 #v.div_(self.damping)  # enable or disable it
-            else: # use Moore-Penrose inverse
+            else: # use Moore-Penrose inverse (not working)
                 v = (mg @ ma.T).mul_(ag/(a * g * a * g + 1e-8))
                 #if backend.comm.rank() == 0:
                 #    logger.info("v.sum(): %f" % (torch.abs(v).sum()))
