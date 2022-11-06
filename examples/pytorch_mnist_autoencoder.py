@@ -163,13 +163,46 @@ def get_dataset(args):
     torch.set_num_threads(4)
     kwargs = {'num_workers': 4, 'pin_memory': True} if args.cuda else {}
 
-    transform=transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.1307,), (0.3081,))
-        ])
+    if args.dataset == 'mnist':
+        transform=transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,))
+            ])
 
-    train_dataset = datasets.MNIST(root=args.dir, train=True, download=False, transform=transform)
-    test_dataset = datasets.MNIST(root=args.dir, train=False, download=False, transform=transform)
+        train_dataset = datasets.MNIST(root=args.dir, train=True, download=False, transform=transform)
+        test_dataset = datasets.MNIST(root=args.dir, train=False, download=False, transform=transform)
+    elif args.dataset == 'fmnist':
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,))
+            ])
+        train_dataset = datasets.FashionMNIST(root=args.dir, train=True, download=False, transform=transform)
+        test_dataset = datasets.FashionMNIST(root=args.dir, train=False, download=False, transform=transform)
+    elif args.dataset == 'faces':
+        # download from: wget www.cs.toronto.edu/~jmartens/newfaces_rot_single.mat
+        import scipy.io as sio
+        from torch.utils.data import TensorDataset
+
+        images_ = sio.loadmat(os.path.join(args.dir, 'newfaces_rot_single.mat'))
+        images_ = np.asarray(images_['newfaces_single'])
+        images_ = np.transpose(images_)
+        train_images = torch.from_numpy(images_[:103500]).float() 
+        test_images = torch.from_numpy(images_[-41400:]).float() 
+
+        train_dataset = TensorDataset(train_images, train_images)
+        test_dataset = TensorDataset(train_images, train_images)
+
+    elif args.dataset == 'curves':
+        # download from: wget www.cs.toronto.edu/~jmartens/digs3pts_1.mat
+        import scipy.io as sio
+        from torch.utils.data import TensorDataset
+
+        images_ = sio.loadmat(os.path.join(args.dir, 'digs3pts_1.mat'))
+        train_images = torch.from_numpy(images_['bdata']).float() 
+        test_images = torch.from_numpy(images_['bdatatest']).float() 
+
+        train_dataset = TensorDataset(train_images, train_images)
+        test_dataset = TensorDataset(train_images, train_images)
 
     # Use DistributedSampler to partition the training data.
     train_sampler = torch.utils.data.distributed.DistributedSampler(
@@ -189,33 +222,36 @@ def get_dataset(args):
 
 
 class Autoencoder(nn.Module):
-    def __init__(self):
+    def __init__(self, dataset):
         super(Autoencoder, self).__init__()
-        self.fc1 = nn.Linear(784, 1000)
+        in_dim = 625 if dataset == 'faces' else 784
+        self.fc1 = nn.Linear(in_dim, 1000)
         self.fc2 = nn.Linear(1000, 500)
         self.fc3 = nn.Linear(500, 250)
         self.fc4 = nn.Linear(250, 30)
         self.fc5 = nn.Linear(30, 250)
         self.fc6 = nn.Linear(250, 500)
         self.fc7 = nn.Linear(500, 1000)
-        self.fc8 = nn.Linear(1000, 784)
+        self.fc8 = nn.Linear(1000, in_dim)
+        self.r = F.relu
    
     def forward(self, inputs):
         # encoder
         x = inputs.view(inputs.size(0), -1)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = F.relu(self.fc3(x))
+        x = self.r(self.fc1(x))
+        x = self.r(self.fc2(x))
+        x = self.r(self.fc3(x))
         x = self.fc4(x)
         # decoder
-        x = F.relu(self.fc5(x))
-        x = F.relu(self.fc6(x))
-        x = F.relu(self.fc7(x))
+        x = self.r(self.fc5(x))
+        x = self.r(self.fc6(x))
+        x = self.r(self.fc7(x))
         x = self.fc8(x)
-        return x.view(-1, 1, 28, 28)
+        return x
+        #return x.view(-1, 1, 28, 28)
 
 def get_model(args):
-    model = Autoencoder()
+    model = Autoencoder(args.dataset)
 
     if args.cuda:
         model.cuda()
@@ -329,7 +365,7 @@ def train(epoch, model, optimizer, preconditioner, lr_scheduler, criterion, trai
         optimizer.zero_grad()
         output = model(data)
 
-        loss = criterion(output, data) # MSE
+        loss = criterion(output, data.view(data.size(0), -1)) # MSE
         
         with torch.no_grad():
             train_loss.update(loss)
@@ -368,6 +404,23 @@ def train(epoch, model, optimizer, preconditioner, lr_scheduler, criterion, trai
     if args.verbose:
         logger.info("[%d] epoch learning rate: %f" % (epoch, optimizer.param_groups[0]['lr']))
 
+def test(epoch, model, criterion, test_loader, args):
+    model.eval()
+    test_loss = Metric('val_loss')
+    
+    with torch.no_grad():
+        for batch_idx, (data, target) in enumerate(test_loader):
+            if args.cuda:
+                data, target = data.cuda(), target.cuda()
+            output = model(data)
+            
+            test_loss.update(criterion(output, data.view(data.size(0), -1))) #MSE
+            
+    if args.verbose:
+        logger.info("[%d] evaluation loss: %.4f" % (epoch, test_loss.avg.item()))
+        if wandb:
+            wandb.log({"eval loss": test_loss.avg.item()})
+
 
 if __name__ == '__main__':
     torch.multiprocessing.set_start_method('spawn')
@@ -383,6 +436,7 @@ if __name__ == '__main__':
     for epoch in range(args.epochs):
         stime = time.time()
         train(epoch, model, optimizer, preconditioner, lr_scheduler, criterion, train_sampler, train_loader, args)
+        test(epoch, model, criterion, test_loader, args)
         if args.verbose:
             logger.info("[%d] epoch train time: %.3f"%(epoch, time.time() - stime))
 
