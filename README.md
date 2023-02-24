@@ -75,3 +75,13 @@ Note: if `--kfac-update-freq 0`, the K-FAC Preconditioning is skipped entirely, 
 
 Make sure the datasets were prepared in correct dirs (e.g., /datasets/cifar10) before running the experiments. We downloaded Cifar-10, Cifar-100, and Imagenet datasets via Torchvision's [Datasets](https://pytorch.org/vision/stable/datasets.html). 
 
+## Citation
+
+```
+@inproceedings{zhang2023eva,
+  title={Eva: Practical Second-order Optimization with Kronecker-vectorized Approximation},
+  author={Zhang, Lin and Shi, Shaohuai and Li, Bo},
+  booktitle={International Conference on Learning Representations},
+  year={2023}
+}
+```
