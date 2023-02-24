@@ -83,6 +83,8 @@ def initialize():
                         help='number of epochs to train')
     parser.add_argument('--base-lr', type=float, default=0.0125,
                         help='learning rate for a single GPU')
+    parser.add_argument('--lr-schedule', type=str, default='step', 
+                        choices=['step', 'linear', 'polynomial', 'cosine'], help='learning rate schedules')
     parser.add_argument('--lr-decay', nargs='+', type=int, default=[30, 60, 80],
                         help='epoch intervals to decay lr')
     parser.add_argument('--warmup-epochs', type=float, default=5,
@@ -189,7 +191,7 @@ def initialize():
     
     algo = args.kfac_name if args.use_kfac else args.opt_name
     #logfile = './logs/debug_imagenet_{}_lr{}_bs{}_gpu{}_kfac{}_{}_damping{}.log'.format(args.model, args.base_lr, args.batch_size, backend.comm.size(), args.kfac_update_freq, algo, args.damping)
-    logfile = './logs/imagenet_{}_bs{}_gpu{}_kfac{}_{}.log'.format(args.model, args.batch_size, backend.comm.size(), args.kfac_update_freq, algo)
+    logfile = './logs/imagenet_{}_bs{}_gpu{}_kfac{}_{}_lr{}_wd{}.log'.format(args.model, args.batch_size, backend.comm.size(), args.kfac_update_freq, algo, args.base_lr, args.weight_decay)
     hdlr = logging.FileHandler(logfile)
     hdlr.setFormatter(formatter)
     logger.addHandler(hdlr) 
@@ -372,8 +374,15 @@ def get_model(args):
         model.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
 
+    if args.lr_schedule == 'cosine':
+        lrs = create_cosine_lr_schedule(args.warmup_epochs * args.num_steps_per_epoch, args.epochs * args.num_steps_per_epoch)
+    elif args.lr_schedule == 'linear':
+        lrs = create_polynomial_lr_schedule(args.base_lr, args.warmup_epochs * args.num_steps_per_epoch, args.epochs * args.num_steps_per_epoch, lr_end=0.0, power=1.0)
+    elif args.lr_schedule == 'polynomial':
+        lrs = create_polynomial_lr_schedule(args.base_lr, args.warmup_epochs * args.num_steps_per_epoch, args.epochs * args.num_steps_per_epoch, lr_end=0.0, power=2.0)
+    elif args.lr_schedule == 'step':
+        lrs = create_multi_step_lr_schedule(backend.comm.size(), args.warmup_epochs, args.lr_decay)
 
-    lrs = create_multi_step_lr_schedule(backend.comm.size(), args.warmup_epochs, args.lr_decay)
     lr_scheduler = [LambdaLR(optimizer, lrs)]
     if preconditioner is not None:
         lr_scheduler.append(LambdaLR(preconditioner, lrs))
@@ -516,6 +525,7 @@ if __name__ == '__main__':
     args = initialize()
 
     train_sampler, train_loader, _, val_loader = get_datasets(args)
+    args.num_steps_per_epoch = len(train_loader)
     model, opt, preconditioner, lr_schedules, lrs, loss_func = get_model(args)
 
     if args.verbose:
