@@ -43,7 +43,7 @@ import torch.distributed as dist
 
 import wandb
 wandb = False
-SPEED = False
+SPEED = True
 
 def initialize():
     # Training Parameters
@@ -163,7 +163,8 @@ def initialize():
     os.makedirs(args.log_dir, exist_ok=True)
     logfile = os.path.join(args.log_dir,
         #'{}_{}_ep{}_bs{}_lr{}_gpu{}_kfac{}_{}_{}_momentum{}_damping{}_stat{}_clip{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, args.base_lr, backend.comm.size(), args.kfac_update_freq, algo, args.lr_schedule, args.momentum, args.damping, args.stat_decay, args.kl_clip))
-        '{}_{}_ep{}_bs{}_lr{}_gpu{}_kfac{}_{}_top{}_{}_momentum{}_damping{}_stat{}_clip{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, args.base_lr, backend.comm.size(), args.kfac_update_freq, algo, args.topk, args.lr_schedule, args.momentum, args.damping, args.stat_decay, args.kl_clip))
+        #'{}_{}_ep{}_bs{}_lr{}_gpu{}_kfac{}_{}_top{}_{}_momentum{}_damping{}_stat{}_clip{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, args.base_lr, backend.comm.size(), args.kfac_update_freq, algo, args.topk, args.lr_schedule, args.momentum, args.damping, args.stat_decay, args.kl_clip))
+        '{}_{}_ep{}_bs{}_lr{}_gpu{}_kfac{}_{}.log'.format(args.dataset, args.model, args.epochs, args.batch_size, args.base_lr, backend.comm.size(), args.kfac_update_freq, algo))
 
     hdlr = logging.FileHandler(logfile)
     hdlr.setFormatter(formatter)
